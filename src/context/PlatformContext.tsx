@@ -226,8 +226,16 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (data.settings) setSettings(data.settings);
         setWorkspaceLoaded(true);
       } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : 'تعذر تحميل بيانات المنصة من قاعدة البيانات';
+        const extracted =
+          err instanceof Error
+            ? err.message
+            : err &&
+                typeof err === 'object' &&
+                'message' in err &&
+                typeof (err as { message?: unknown }).message === 'string'
+              ? (err as { message: string }).message
+              : '';
+        const msg = extracted.trim() || 'تعذر تحميل بيانات المنصة من قاعدة البيانات';
         setWorkspaceLoaded(false);
         setWorkspaceError(msg);
         pushToast(msg, 'warning');
@@ -242,13 +250,17 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     if (!isSupabaseLive || !supabase) return;
 
+    let active = true;
+
     SupabaseBackend.loadPublicConfig().then((cfg) => {
+      if (!active) return;
       if (cfg?.branding) setBranding(cfg.branding);
       if (cfg?.permissions) setPermissions(cfg.permissions);
       if (cfg?.settings) setSettings(cfg.settings);
     });
 
     supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
       setSession(data.session);
       setAuthLoading(false);
       if (data.session?.user?.id) {
@@ -256,9 +268,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return;
       setSession(nextSession);
       setAuthLoading(false);
+      if (event === 'INITIAL_SESSION') return;
       if (nextSession?.user?.id) {
         hydrateLiveWorkspace(nextSession.user.id);
       } else {
@@ -273,6 +287,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
 
     return () => {
+      active = false;
       sub.subscription.unsubscribe();
     };
   }, [isSupabaseLive, hydrateLiveWorkspace]);

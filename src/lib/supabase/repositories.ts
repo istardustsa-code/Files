@@ -152,7 +152,19 @@ export const SupabaseBackend = {
     };
   },
 
-  async loadAuthenticatedWorkspace(userId: string) {
+  async loadAuthenticatedWorkspace(userId: string, retried = false): Promise<{
+    users: UserAccount[];
+    schools: School[];
+    groups: EducationalGroup[];
+    sections: PortfolioSection[];
+    files: PortfolioFile[];
+    achievements: AchievementItem[];
+    activityLogs: ActivityLogEntry[];
+    notifications: NotificationItem[];
+    branding?: PlatformBranding;
+    permissions?: Record<UserRole, RolePermissionSet>;
+    settings?: PlatformSettings;
+  }> {
     const client = requireClient();
 
     const [
@@ -183,11 +195,30 @@ export const SupabaseBackend = {
       client.from('platform_config').select('*').eq('id', 'default').maybeSingle(),
     ]);
 
-    if (profilesRes.error) throw profilesRes.error;
-    if (schoolsRes.error) throw schoolsRes.error;
-    if (groupsRes.error) throw groupsRes.error;
-    if (sectionsRes.error) throw sectionsRes.error;
-    if (filesRes.error) throw filesRes.error;
+    const firstCoreError =
+      (profilesRes.error && { table: 'profiles', err: profilesRes.error }) ||
+      (schoolsRes.error && { table: 'schools', err: schoolsRes.error }) ||
+      (groupsRes.error && { table: 'educational_groups', err: groupsRes.error }) ||
+      (sectionsRes.error && { table: 'portfolio_sections', err: sectionsRes.error }) ||
+      (filesRes.error && { table: 'portfolio_files', err: filesRes.error }) ||
+      null;
+
+    if (firstCoreError) {
+      const { table, err } = firstCoreError;
+      const errMsg = err.message || 'خطأ في الاستعلام';
+      const isJwtIssue =
+        err.code === 'PGRST301' ||
+        err.code === 'PGRST302' ||
+        err.code === 'PGRST303' ||
+        errMsg.toLowerCase().includes('jwt');
+      if (isJwtIssue && !retried) {
+        const { data: refreshed } = await client.auth.refreshSession();
+        if (refreshed.session?.user?.id) {
+          return this.loadAuthenticatedWorkspace(refreshed.session.user.id, true);
+        }
+      }
+      throw new Error(`[${table}] ${errMsg}${err.code ? ` (${err.code})` : ''}`);
+    }
 
     const groupsList = (groupsRes.data as SupabaseGroupRow[]).map(mapGroupRow);
     const schoolsList = (schoolsRes.data as SupabaseSchoolRow[]).map((s) =>
