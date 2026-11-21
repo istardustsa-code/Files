@@ -65,6 +65,7 @@ export interface UserAccount {
   assignedSchoolIds?: string[]; // For managers
   assignedGroupIds?: string[];  // For managers
   managerId?: string;           // For teachers
+  allowManagerView?: boolean;   // Teacher privacy toggle: allow manager to view portfolio
   isActive: boolean;
   createdAt: string;
   lastActiveAt: string;

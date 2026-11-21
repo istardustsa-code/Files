@@ -123,9 +123,10 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredTeachers.map((t) => {
-          const pct = getTeacherCompletionPercent(t.id);
+          const canView = t.allowManagerView !== false;
+          const pct = canView ? getTeacherCompletionPercent(t.id) : null;
           const schoolName = assignedSchools.find((s) => s.id === t.schoolId)?.name ?? '';
-          const tFilesCount = visibleFiles.filter((f) => f.ownerId === t.id).length;
+          const tFilesCount = canView ? visibleFiles.filter((f) => f.ownerId === t.id).length : 0;
 
           return (
             <div
@@ -145,19 +146,27 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
                   </div>
                 </div>
 
-                <div className="space-y-1.5 pt-2">
-                  <div className="flex justify-between text-xs text-[#666560]">
-                    <span>اكتمال ملف الإنجاز</span>
-                    <span className="font-mono-num font-semibold text-[#454943]">{pct}%</span>
+                {canView ? (
+                  <div className="space-y-1.5 pt-2">
+                    <div className="flex justify-between text-xs text-[#666560]">
+                      <span>اكتمال ملف الإنجاز</span>
+                      <span className="font-mono-num font-semibold text-[#454943]">{pct}%</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-[#F7F5F0] overflow-hidden">
+                      <div className="h-full bg-[#A8B9A5]" style={{ width: `${pct}%` }} />
+                    </div>
                   </div>
-                  <div className="w-full h-2 rounded-full bg-[#F7F5F0] overflow-hidden">
-                    <div className="h-full bg-[#A8B9A5]" style={{ width: `${pct}%` }} />
+                ) : (
+                  <div className="p-3 rounded-xl bg-[#F7F5F0] border border-[#D9C9B5]/60 text-xs text-[#666560]">
+                    ملف خاص — لم يفعّل المعلم صلاحية اطلاع المدير على ملفه حاليًا.
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="pt-3 border-t border-[#D9C9B5]/50 flex items-center justify-between text-xs">
-                <span className="text-[#666560] tabular-nums">{tFilesCount} ملفات مرفوعة</span>
+                <span className="text-[#666560] tabular-nums">
+                  {canView ? `${tFilesCount} ملفات مرفوعة` : 'الاطلاع مقفل من المعلم'}
+                </span>
                 <button
                   type="button"
                   onClick={() => setInspectTeacher(t)}
@@ -181,7 +190,11 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
         maxWidthClass="max-w-2xl"
       >
         <div className="space-y-4">
-          {inspectFiles.length === 0 ? (
+          {inspectTeacher?.allowManagerView === false ? (
+            <div className="p-4 rounded-xl bg-[#F7F5F0] border border-[#D9C9B5]/70 text-sm text-[#666560] leading-relaxed">
+              اختار المعلم إخفاء ملف إنجازه عن مدير العمل حاليًا. لا يمكن عرض الملفات أو الإنجازات حتى يقوم المعلم بتفعيل صلاحية الاطلاع من حسابه.
+            </div>
+          ) : inspectFiles.length === 0 ? (
             <p className="text-sm text-[#666560]">لم يقم المعلم برفع ملفات حتى الآن.</p>
           ) : (
             <div className="divide-y divide-[#D9C9B5]/50 border border-[#D9C9B5]/70 rounded-xl">

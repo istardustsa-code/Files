@@ -23,6 +23,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
   const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>(
     mode === 'teachers' ? 'teacher' : mode === 'managers' ? 'manager' : 'all'
   );
+  const [schoolFilter, setSchoolFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
@@ -41,6 +42,10 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
   const [assignedSchoolIds, setAssignedSchoolIds] = useState<string[]>([]);
 
   const managersList = useMemo(() => users.filter((u) => u.role === 'manager'), [users]);
+  const scopedGroups = useMemo(
+    () => (schoolId ? groups.filter((g) => g.schoolId === schoolId) : []),
+    [groups, schoolId]
+  );
 
   const effectiveRoleFilter =
     mode === 'teachers' ? 'teacher' : mode === 'managers' ? 'manager' : roleFilter;
@@ -48,6 +53,20 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
   const filteredUsers = useMemo(() => {
     return users
       .filter((u) => (effectiveRoleFilter === 'all' ? true : u.role === effectiveRoleFilter))
+      .filter((u) => {
+        if (schoolFilter === 'all') return true;
+        if (schoolFilter === 'unassigned') {
+          return u.role === 'teacher' && !u.schoolId;
+        }
+        if (u.role === 'teacher') return u.schoolId === schoolFilter;
+        if (u.role === 'manager') {
+          const managesViaSchool = schools.some(
+            (s) => s.id === schoolFilter && s.managerId === u.id
+          );
+          return managesViaSchool || (u.assignedSchoolIds?.includes(schoolFilter) ?? false);
+        }
+        return false;
+      })
       .filter((u) => {
         const q = search.trim().toLowerCase();
         if (!q) return true;
@@ -57,7 +76,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
           u.jobTitle.toLowerCase().includes(q)
         );
       });
-  }, [users, effectiveRoleFilter, search]);
+  }, [users, effectiveRoleFilter, schoolFilter, schools, search]);
 
   const openCreateModal = () => {
     setEditingUser(null);
@@ -163,6 +182,21 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
               ))}
             </div>
           )}
+
+          <select
+            value={schoolFilter}
+            onChange={(e) => setSchoolFilter(e.target.value)}
+            aria-label="تصفية حسب المدرسة"
+            className="px-3 py-2 text-xs bg-[#F7F5F0]/80 border border-[#D9C9B5]/70 rounded-xl text-[#454943]"
+          >
+            <option value="all">جميع المدارس</option>
+            <option value="unassigned">معلمون بدون مدرسة بعد</option>
+            {schools.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         <button
@@ -197,11 +231,14 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
             </thead>
             <tbody className="divide-y divide-[#D9C9B5]/40 text-sm">
               {filteredUsers.map((u) => {
+                const managerSchoolCount = schools.filter(
+                  (s) => s.managerId === u.id || (u.assignedSchoolIds?.includes(s.id) ?? false)
+                ).length;
                 const schoolName =
                   u.role === 'teacher'
                     ? schools.find((s) => s.id === u.schoolId)?.name ?? 'غير مسند'
                     : u.role === 'manager'
-                      ? `${u.assignedSchoolIds?.length ?? 0} مدارس مسندة`
+                      ? `${managerSchoolCount} مدارس مسندة`
                       : 'كامل المنصة';
                 const completion = u.role === 'teacher' ? getTeacherCompletionPercent(u.id) : null;
 
@@ -226,7 +263,18 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
                       </p>
                       <p className="text-xs text-[#666560]">{u.jobTitle}</p>
                     </td>
-                    <td className="py-3.5 px-4 text-xs text-[#454943]">{schoolName}</td>
+                    <td className="py-3.5 px-4 text-xs text-[#454943]">
+                      <p>{schoolName}</p>
+                      {u.role === 'teacher' && (
+                        <p
+                          className={`text-[11px] mt-0.5 ${
+                            u.allowManagerView === false ? 'text-[#8A5E56]' : 'text-[#556952]'
+                          }`}
+                        >
+                          {u.allowManagerView === false ? 'مخفي عن المدير' : 'متاح للمدير'}
+                        </p>
+                      )}
+                    </td>
                     {mode === 'teachers' && (
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2">
@@ -351,7 +399,16 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
                 <label className="block text-xs font-medium text-[#454943] mb-1">المدرسة</label>
                 <select
                   value={schoolId}
-                  onChange={(e) => setSchoolId(e.target.value)}
+                  onChange={(e) => {
+                    const nextSchoolId = e.target.value;
+                    setSchoolId(nextSchoolId);
+                    const validGroup = groups.some(
+                      (g) => g.id === groupId && g.schoolId === nextSchoolId
+                    );
+                    if (!validGroup) setGroupId('');
+                    const schoolMgr = schools.find((s) => s.id === nextSchoolId)?.managerId;
+                    if (schoolMgr) setManagerId(schoolMgr);
+                  }}
                   className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl"
                 >
                   <option value="">بدون مدرسة</option>
@@ -367,10 +424,13 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ mode }) 
                 <select
                   value={groupId}
                   onChange={(e) => setGroupId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl"
+                  disabled={!schoolId}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl disabled:opacity-60"
                 >
-                  <option value="">بدون مجموعة</option>
-                  {groups.map((g) => (
+                  <option value="">
+                    {schoolId ? 'بدون مجموعة' : 'اختر المدرسة أولاً'}
+                  </option>
+                  {scopedGroups.map((g) => (
                     <option key={g.id} value={g.id}>
                       {g.name}
                     </option>

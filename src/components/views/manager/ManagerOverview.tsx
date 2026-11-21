@@ -22,17 +22,18 @@ export const ManagerOverview: React.FC = () => {
   } = usePlatform();
 
   const pendingReviews = visibleFiles.filter((f) => f.reviewStatus === 'pending');
+  const viewableTeachers = assignedTeachers.filter((t) => t.allowManagerView !== false);
   const avgCompletion =
-    assignedTeachers.length > 0
+    viewableTeachers.length > 0
       ? Math.round(
-          assignedTeachers.reduce((acc, t) => acc + getTeacherCompletionPercent(t.id), 0) /
-            assignedTeachers.length
+          viewableTeachers.reduce((acc, t) => acc + getTeacherCompletionPercent(t.id), 0) /
+            viewableTeachers.length
         )
       : 0;
 
-  const assignedTeacherIds = new Set(assignedTeachers.map((t) => t.id));
+  const viewableTeacherIds = new Set(viewableTeachers.map((t) => t.id));
   const recentTeacherActivities = activityLogs
-    .filter((a) => assignedTeacherIds.has(a.actorId))
+    .filter((a) => viewableTeacherIds.has(a.actorId))
     .slice(0, 5);
 
   return (
@@ -143,7 +144,8 @@ export const ManagerOverview: React.FC = () => {
           <h3 className="text-base font-semibold text-[#454943]">إحصائيات إنجاز المعلمين</h3>
           <div className="space-y-4">
             {assignedTeachers.map((t) => {
-              const pct = getTeacherCompletionPercent(t.id);
+              const canView = t.allowManagerView !== false;
+              const pct = canView ? getTeacherCompletionPercent(t.id) : 0;
               const sch = assignedSchools.find((s) => s.id === t.schoolId)?.name ?? '';
               return (
                 <div key={t.id} className="space-y-1.5">
@@ -152,10 +154,15 @@ export const ManagerOverview: React.FC = () => {
                       <span className="font-medium text-[#454943]">{t.fullName}</span>
                       <span className="text-xs text-[#666560] mr-2">· {sch}</span>
                     </div>
-                    <span className="font-mono-num text-xs font-semibold tabular-nums">{pct}%</span>
+                    <span className="font-mono-num text-xs font-semibold tabular-nums text-[#666560]">
+                      {canView ? `${pct}%` : 'ملف خاص'}
+                    </span>
                   </div>
                   <div className="w-full h-2 rounded-full bg-[#F7F5F0] overflow-hidden">
-                    <div className="h-full bg-[#A8B9A5]" style={{ width: `${pct}%` }} />
+                    <div
+                      className={canView ? 'h-full bg-[#A8B9A5]' : 'h-full bg-[#D9C9B5]/40'}
+                      style={{ width: `${pct}%` }}
+                    />
                   </div>
                 </div>
               );

@@ -27,6 +27,9 @@ export const ReportsView: React.FC = () => {
     const headers = ['اسم المعلم', 'المدرسة', 'عدد الملفات', 'الملفات المعتمدة', 'نسبة الاكتمال %'];
     const rows = scopeTeachers.map((t) => {
       const sName = schools.find((s) => s.id === t.schoolId)?.name ?? 'غير محدد';
+      if (currentRole === 'manager' && t.allowManagerView === false) {
+        return [t.fullName, sName, 'خاص', 'خاص', 'مخفي عن المدير'];
+      }
       const tFiles = activeFiles.filter((f) => f.ownerId === t.id);
       const approved = tFiles.filter((f) => f.reviewStatus === 'approved').length;
       return [t.fullName, sName, tFiles.length, approved, getTeacherCompletionPercent(t.id)];
@@ -67,11 +70,15 @@ export const ReportsView: React.FC = () => {
           <div className="space-y-4">
             {scopeSchools.map((sch) => {
               const schTeachers = scopeTeachers.filter((t) => t.schoolId === sch.id);
+              const viewableSchTeachers =
+                currentRole === 'manager'
+                  ? schTeachers.filter((t) => t.allowManagerView !== false)
+                  : schTeachers;
               const avg =
-                schTeachers.length > 0
+                viewableSchTeachers.length > 0
                   ? Math.round(
-                      schTeachers.reduce((a, t) => a + getTeacherCompletionPercent(t.id), 0) /
-                        schTeachers.length
+                      viewableSchTeachers.reduce((a, t) => a + getTeacherCompletionPercent(t.id), 0) /
+                        viewableSchTeachers.length
                     )
                   : 0;
               return (

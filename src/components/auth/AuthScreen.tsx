@@ -53,6 +53,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [jobTitle, setJobTitle] = useState('معلم');
+  const [schoolCode, setSchoolCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
@@ -83,7 +84,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
           cleanEmail,
           password,
           fullName.trim(),
-          jobTitle.trim()
+          jobTitle.trim(),
+          schoolCode.trim()
         );
         if (res.session) {
           pushToast('تم إنشاء الحساب وتسجيل الدخول');
@@ -231,6 +233,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
                   placeholder="معلم / معلمة"
                   className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D9C9B5] rounded-xl"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#454943] mb-1">
+                  رمز المدرسة للانضمام المباشر <span className="text-[#85847E] font-normal">(اختياري)</span>
+                </label>
+                <input
+                  type="text"
+                  dir="ltr"
+                  value={schoolCode}
+                  onChange={(e) => setSchoolCode(e.target.value.toUpperCase())}
+                  placeholder="SCH-101"
+                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D9C9B5] rounded-xl text-left uppercase"
+                />
+                <p className="text-[11px] text-[#666560] mt-1">
+                  إذا أعطتكِ إدارة المنصة رمز مدرستك، اكتبيه هنا ليُربط حسابكِ بمدرستكِ وحدها تلقائيًا.
+                </p>
               </div>
             </>
           )}

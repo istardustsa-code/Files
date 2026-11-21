@@ -52,6 +52,7 @@ create table if not exists public.profiles (
   school_id uuid references public.schools(id) on delete set null,
   group_id uuid references public.educational_groups(id) on delete set null,
   manager_id uuid references public.profiles(id) on delete set null,
+  allow_manager_view boolean not null default true,
   is_active boolean not null default true,
   storage_quota_mb integer not null default 500,
   created_at timestamptz not null default now(),

@@ -66,9 +66,16 @@ export const SupabaseBackend = {
     return data;
   },
 
-  async signUp(email: string, password: string, fullName: string, jobTitle: string) {
+  async signUp(
+    email: string,
+    password: string,
+    fullName: string,
+    jobTitle: string,
+    schoolCode?: string
+  ) {
     const client = requireClient();
     const cleanEmail = email.replace(/\s+/g, '').toLowerCase();
+    const cleanSchoolCode = schoolCode ? schoolCode.trim().toUpperCase() : '';
     const { data, error } = await client.auth.signUp({
       email: cleanEmail,
       password,
@@ -77,6 +84,7 @@ export const SupabaseBackend = {
         data: {
           full_name: fullName,
           job_title: jobTitle || 'معلم',
+          ...(cleanSchoolCode ? { school_code: cleanSchoolCode } : {}),
         },
       },
     });
@@ -547,6 +555,8 @@ export const SupabaseBackend = {
     if (updates.schoolId !== undefined) payload.school_id = updates.schoolId || null;
     if (updates.groupId !== undefined) payload.group_id = updates.groupId || null;
     if (updates.managerId !== undefined) payload.manager_id = updates.managerId || null;
+    if (updates.allowManagerView !== undefined)
+      payload.allow_manager_view = updates.allowManagerView;
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
 
     const { error } = await client.from('profiles').update(payload).eq('id', id);
@@ -562,13 +572,22 @@ export const SupabaseBackend = {
     }
   },
 
+  async joinSchoolByCode(schoolCode: string): Promise<School> {
+    const client = requireClient();
+    const { data, error } = await client.rpc('join_school_by_code', {
+      target_code: schoolCode.trim().toUpperCase(),
+    });
+    if (error) throw error;
+    return mapSchoolRow(data as SupabaseSchoolRow, 0);
+  },
+
   async createSchool(input: Omit<School, 'id' | 'createdAt' | 'groupsCount'>): Promise<School> {
     const client = requireClient();
     const { data, error } = await client
       .from('schools')
       .insert({
         name: input.name,
-        code: input.code,
+        code: input.code.trim().toUpperCase(),
         stage: input.stage,
         city: input.city,
         manager_id: input.managerId ?? null,
@@ -577,6 +596,25 @@ export const SupabaseBackend = {
       .single<SupabaseSchoolRow>();
     if (error) throw error;
     return mapSchoolRow(data, 0);
+  },
+
+  async updateSchool(id: string, updates: Partial<School>): Promise<School> {
+    const client = requireClient();
+    const payload: Record<string, unknown> = {};
+    if (updates.name !== undefined) payload.name = updates.name.trim();
+    if (updates.code !== undefined) payload.code = updates.code.trim().toUpperCase();
+    if (updates.stage !== undefined) payload.stage = updates.stage;
+    if (updates.city !== undefined) payload.city = updates.city.trim();
+    if ('managerId' in updates) payload.manager_id = updates.managerId || null;
+
+    const { data, error } = await client
+      .from('schools')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single<SupabaseSchoolRow>();
+    if (error) throw error;
+    return mapSchoolRow(data, updates.groupsCount ?? 0);
   },
 
   async deleteSchool(id: string): Promise<void> {

@@ -48,6 +48,7 @@ export interface SupabaseProfileRow {
   school_id: string | null;
   group_id: string | null;
   manager_id: string | null;
+  allow_manager_view?: boolean;
   is_active: boolean;
   storage_quota_mb: number;
   created_at: string;
@@ -184,6 +185,7 @@ export function mapProfileRow(
     schoolId: row.school_id ?? undefined,
     groupId: row.group_id ?? undefined,
     managerId: row.manager_id ?? undefined,
+    allowManagerView: row.allow_manager_view ?? true,
     assignedSchoolIds: row.role === 'manager' ? assignedSchoolIds : undefined,
     assignedGroupIds: row.role === 'manager' ? assignedGroupIds : undefined,
     isActive: row.is_active,

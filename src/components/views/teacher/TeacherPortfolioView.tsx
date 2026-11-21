@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Upload, Award, FolderOpen, Trash2 } from 'lucide-react';
+import { Plus, Upload, Award, FolderOpen, Trash2, Eye, EyeOff } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
 import { UploadFileModal } from '../../common/UploadFileModal';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
@@ -23,7 +23,10 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     createSection,
     addAchievement,
     deleteAchievement,
+    toggleManagerViewPermission,
   } = usePlatform();
+
+  const allowManagerView = currentUser.allowManagerView !== false;
 
   const [uploadSectionId, setUploadSectionId] = useState<string | undefined>(undefined);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -256,6 +259,31 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
             <span>رفع ملف</span>
           </button>
         </div>
+      </div>
+
+      {/* Quick Privacy Control Bar for Manager Visibility */}
+      <div
+        className={`rounded-2xl border px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 ${
+          allowManagerView
+            ? 'bg-[#A8B9A5]/15 border-[#A8B9A5]/50 text-[#3F573C]'
+            : 'bg-[#D8BDB7]/20 border-[#D8BDB7]/60 text-[#7B4B43]'
+        }`}
+      >
+        <div className="flex items-center gap-2.5 text-xs">
+          {allowManagerView ? <Eye size={16} className="shrink-0" /> : <EyeOff size={16} className="shrink-0" />}
+          <span>
+            {allowManagerView
+              ? 'حالة الخصوصية: يسمح لمدير العمل المشرف على مدرستك بالاطلاع على ملفك ومراجعته فقط (لا يراه بقية المعلمين).'
+              : 'حالة الخصوصية: ملفك مخفي الآن عن مدير العمل ولا يمكن لأي شخص غيرك الاطلاع عليه.'}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => void toggleManagerViewPermission(!allowManagerView)}
+          className="px-3.5 py-1.5 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] hover:bg-[#F7F5F0] rounded-lg whitespace-nowrap"
+        >
+          {allowManagerView ? 'إخفاء عن المدير' : 'السماح للمدير بالاطلاع'}
+        </button>
       </div>
 
       {/* Sections & their files */}

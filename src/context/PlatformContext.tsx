@@ -121,9 +121,11 @@ interface PlatformContextValue {
   // User, School & Group operations
   createUser: (input: Omit<UserAccount, 'id' | 'createdAt' | 'lastActiveAt'>) => void;
   updateUser: (id: string, updates: Partial<UserAccount>) => Promise<void>;
+  toggleManagerViewPermission: (allow: boolean) => Promise<void>;
+  joinSchoolByCode: (code: string) => Promise<boolean>;
   toggleUserActive: (id: string) => Promise<void>;
   createSchool: (input: Omit<School, 'id' | 'createdAt' | 'groupsCount'>) => Promise<void>;
-  updateSchool: (id: string, updates: Partial<School>) => void;
+  updateSchool: (id: string, updates: Partial<School>) => Promise<void>;
   deleteSchool: (id: string) => Promise<void>;
   createGroup: (input: Omit<EducationalGroup, 'id' | 'createdAt'>) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
@@ -466,8 +468,10 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (currentRole === 'teacher') {
       return files.filter((f) => f.ownerId === currentUser.id);
     }
-    const teacherIds = new Set(assignedTeachers.map((t) => t.id));
-    return files.filter((f) => !f.isDeleted && teacherIds.has(f.ownerId));
+    const viewableTeacherIds = new Set(
+      assignedTeachers.filter((t) => t.allowManagerView !== false).map((t) => t.id)
+    );
+    return files.filter((f) => !f.isDeleted && viewableTeacherIds.has(f.ownerId));
   }, [files, currentRole, currentUser.id, assignedTeachers]);
 
   const visibleAchievements = useMemo(() => {
@@ -475,8 +479,10 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (currentRole === 'teacher') {
       return achievements.filter((a) => a.ownerId === currentUser.id);
     }
-    const teacherIds = new Set(assignedTeachers.map((t) => t.id));
-    return achievements.filter((a) => teacherIds.has(a.ownerId));
+    const viewableTeacherIds = new Set(
+      assignedTeachers.filter((t) => t.allowManagerView !== false).map((t) => t.id)
+    );
+    return achievements.filter((a) => viewableTeacherIds.has(a.ownerId));
   }, [achievements, currentRole, currentUser.id, assignedTeachers]);
 
   const visibleNotifications = useMemo(() => {
@@ -928,6 +934,69 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     pushToast('تم تحديث بيانات الحساب');
   };
 
+  const toggleManagerViewPermission = async (allow: boolean) => {
+    if (isSupabaseLive) {
+      try {
+        await SupabaseBackend.updateProfile(currentUser.id, { allowManagerView: allow });
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : 'تعذر تحديث إعداد الخصوصية', 'warning');
+        return;
+      }
+    }
+    setUsers((prev) =>
+      prev.map((u) => (u.id === currentUser.id ? { ...u, allowManagerView: allow } : u))
+    );
+    pushToast(
+      allow
+        ? 'تم تفعيل صلاحية اطلاع مدير العمل على ملفك'
+        : 'تم إخفاء ملفك عن مدير العمل بنجاح',
+      allow ? 'success' : 'info'
+    );
+  };
+
+  const joinSchoolByCode = async (code: string): Promise<boolean> => {
+    const cleanCode = code.trim().toUpperCase();
+    if (!cleanCode) {
+      pushToast('يرجى إدخال رمز المدرسة أولاً', 'warning');
+      return false;
+    }
+
+    if (isSupabaseLive) {
+      try {
+        const joinedSchool = await SupabaseBackend.joinSchoolByCode(cleanCode);
+        if (session?.user?.id) {
+          await hydrateLiveWorkspace(session.user.id);
+        }
+        pushToast(`تم ربط حسابكِ بمدرسة "${joinedSchool.name}" بنجاح`);
+        return true;
+      } catch (err) {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : err && typeof err === 'object' && 'message' in err
+              ? String((err as { message: unknown }).message)
+              : 'تعذر الانضمام للمدرسة';
+        pushToast(msg, 'warning');
+        return false;
+      }
+    }
+
+    const matched = schools.find((s) => s.code.trim().toUpperCase() === cleanCode);
+    if (!matched) {
+      pushToast('رمز المدرسة غير صحيح، يرجى التأكد من الرمز', 'warning');
+      return false;
+    }
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === currentUser.id
+          ? { ...u, schoolId: matched.id, managerId: u.managerId || matched.managerId }
+          : u
+      )
+    );
+    pushToast(`تم ربط حسابكِ بمدرسة "${matched.name}" بنجاح`);
+    return true;
+  };
+
   const toggleUserActive = async (id: string) => {
     const target = users.find((u) => u.id === id);
     if (!target) return;
@@ -957,7 +1026,21 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     pushToast(`تمت إضافة "${school.name}"`);
   };
 
-  const updateSchool = (id: string, updates: Partial<School>) => {
+  const updateSchool = async (id: string, updates: Partial<School>) => {
+    if (isSupabaseLive) {
+      try {
+        const existing = schools.find((s) => s.id === id);
+        const updated = await SupabaseBackend.updateSchool(id, {
+          ...updates,
+          groupsCount: existing?.groupsCount ?? 0,
+        });
+        setSchools((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)));
+        pushToast('تم تحديث بيانات المدرسة');
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : 'تعذر تحديث المدرسة', 'warning');
+      }
+      return;
+    }
     setSchools((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
     pushToast('تم تحديث بيانات المدرسة');
   };
@@ -1281,6 +1364,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         reorderSection,
         createUser,
         updateUser,
+        toggleManagerViewPermission,
+        joinSchoolByCode,
         toggleUserActive,
         createSchool,
         updateSchool,
