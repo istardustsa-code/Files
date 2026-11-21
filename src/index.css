@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --brand-ivory: #F7F5F0;
+  --brand-white: #FFFFFF;
+  --brand-sage: #A8B9A5;
+  --brand-sage-deep: #556952;
+  --brand-rose: #D8BDB7;
+  --brand-rose-deep: #8A5E56;
+  --brand-sand: #D9C9B5;
+  --brand-gray: #85847E;
+  --brand-gray-readable: #666560;
+  --brand-ink: #454943;
+}
+
+@layer base {
+  html {
+    direction: rtl;
+    font-family: 'IBM Plex Sans Arabic', system-ui, -apple-system, sans-serif;
+    background-color: var(--brand-ivory);
+    color: var(--brand-ink);
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: 'Readex Pro', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+    text-wrap: balance;
+  }
+
+  .font-mono-num {
+    font-family: 'IBM Plex Mono', 'IBM Plex Sans Arabic', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Smooth focus visibility */
+*:focus-visible {
+  outline: 2px solid var(--brand-sage-deep);
+  outline-offset: 2px;
+}
+
+/* Subtle custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(133, 132, 126, 0.28);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(133, 132, 126, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
