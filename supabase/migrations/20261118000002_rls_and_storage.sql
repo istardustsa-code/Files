@@ -2,13 +2,14 @@
 -- Migration 002: Auth Triggers, Hardened RLS, Anti-Spoofing & Private Storage
 -- ============================================================================
 
--- 1. Security Helper Functions (SECURITY DEFINER to avoid recursive RLS)
+-- 1. Security Helper Functions (SECURITY DEFINER + row_security=off to prevent recursive RLS)
 create or replace function public.current_user_role()
 returns public.app_role
 language sql
 stable
 security definer
 set search_path = public
+set row_security = off
 as $$
   select role from public.profiles where id = auth.uid();
 $$;
@@ -19,6 +20,7 @@ language sql
 stable
 security definer
 set search_path = public
+set row_security = off
 as $$
   select school_uid is not null and exists (
     select 1
@@ -40,6 +42,7 @@ language sql
 stable
 security definer
 set search_path = public
+set row_security = off
 as $$
   select group_uid is not null and exists (
     select 1
@@ -62,6 +65,7 @@ language sql
 stable
 security definer
 set search_path = public
+set row_security = off
 as $$
   select teacher_uid is not null and exists (
     select 1
@@ -390,8 +394,20 @@ alter table public.notifications enable row level security;
 alter table public.notification_reads enable row level security;
 alter table public.platform_config enable row level security;
 
--- PROFILES Policies
-drop policy if exists "profiles_select_scoped" on public.profiles;
+-- PROFILES Policies (drop all prior policies on profiles first to avoid legacy recursion)
+do $$
+declare
+  pol record;
+begin
+  for pol in
+    select policyname
+    from pg_policies
+    where schemaname = 'public' and tablename = 'profiles'
+  loop
+    execute format('drop policy if exists %I on public.profiles', pol.policyname);
+  end loop;
+end $$;
+
 create policy "profiles_select_scoped"
   on public.profiles for select
   using (
@@ -400,18 +416,15 @@ create policy "profiles_select_scoped"
     or (public.current_user_role() = 'manager' and public.is_manager_of_teacher(id))
   );
 
-drop policy if exists "profiles_insert_admin" on public.profiles;
 create policy "profiles_insert_admin"
   on public.profiles for insert
   with check (public.current_user_role() = 'super_admin');
 
-drop policy if exists "profiles_update_self_or_admin" on public.profiles;
 create policy "profiles_update_self_or_admin"
   on public.profiles for update
   using (id = auth.uid() or public.current_user_role() = 'super_admin')
   with check (id = auth.uid() or public.current_user_role() = 'super_admin');
 
-drop policy if exists "profiles_delete_admin" on public.profiles;
 create policy "profiles_delete_admin"
   on public.profiles for delete
   using (public.current_user_role() = 'super_admin');

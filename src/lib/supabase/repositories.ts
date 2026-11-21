@@ -57,17 +57,23 @@ export const SupabaseBackend = {
   // --------------------------------------------------------------------------
   async signIn(email: string, password: string) {
     const client = requireClient();
-    const { data, error } = await client.auth.signInWithPassword({ email, password });
+    const cleanEmail = email.replace(/\s+/g, '').toLowerCase();
+    const { data, error } = await client.auth.signInWithPassword({
+      email: cleanEmail,
+      password,
+    });
     if (error) throw error;
     return data;
   },
 
   async signUp(email: string, password: string, fullName: string, jobTitle: string) {
     const client = requireClient();
+    const cleanEmail = email.replace(/\s+/g, '').toLowerCase();
     const { data, error } = await client.auth.signUp({
-      email,
+      email: cleanEmail,
       password,
       options: {
+        emailRedirectTo: window.location.origin,
         data: {
           full_name: fullName,
           job_title: jobTitle || 'معلم',
@@ -86,7 +92,8 @@ export const SupabaseBackend = {
 
   async resetPassword(email: string) {
     const client = requireClient();
-    const { error } = await client.auth.resetPasswordForEmail(email, {
+    const cleanEmail = email.replace(/\s+/g, '').toLowerCase();
+    const { error } = await client.auth.resetPasswordForEmail(cleanEmail, {
       redirectTo: window.location.origin,
     });
     if (error) throw error;

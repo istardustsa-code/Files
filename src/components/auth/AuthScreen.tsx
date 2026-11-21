@@ -10,6 +10,40 @@ interface AuthScreenProps {
   onEnterPreviewMode?: () => void;
 }
 
+function translateAuthError(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? err.message
+      : err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
+        ? err.message
+        : '';
+  const lower = raw.toLowerCase();
+
+  if (!raw) return 'تعذر إتمام العملية، يرجى التحقق من البيانات والمحاولة مرة أخرى.';
+  if (lower.includes('invalid login credentials')) {
+    return 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
+  }
+  if (lower.includes('email not confirmed')) {
+    return 'لم يتم تأكيد هذا البريد الإلكتروني بعد. افتحي رسالة التأكيد في بريدك أو اطلبي من مديرة المنصة تعطيل خيار تأكيد البريد الإلكتروني في Supabase.';
+  }
+  if (lower.includes('user already registered') || lower.includes('already exists')) {
+    return 'هذا البريد الإلكتروني مسجّل مسبقًا، يمكنك تسجيل الدخول مباشرة أو استعادة كلمة المرور.';
+  }
+  if (lower.includes('rate limit') || lower.includes('too many requests') || lower.includes('over_email_send_rate_limit')) {
+    return 'تم تجاوز حد إرسال رسائل البريد المؤقت في Supabase (رسالتان في الساعة على الخطة المجانية). لتسجيل جميع المعلمات فورًا دون انتظار، أوقفي خيار "Confirm email" في إعدادات Authentication في Supabase.';
+  }
+  if (lower.includes('unable to validate email') || (lower.includes('email') && lower.includes('invalid'))) {
+    return 'صيغة البريد الإلكتروني غير صحيحة أو تحتوي على مسافات أو أحرف غير مدعومة (تأكدي من كتابته بالإنجليزية دون مسافات، ولا يوجد أي تقييد على نوع البريد مثل gmail أو غيره).';
+  }
+  if (lower.includes('password') && (lower.includes('6') || lower.includes('short') || lower.includes('weak'))) {
+    return 'كلمة المرور يجب أن تكون 6 أحرف أو أرقام على الأقل.';
+  }
+  if (lower.includes('signup') && lower.includes('disabled')) {
+    return 'تسجيل الحسابات الجديدة معطّل حاليًا في إعدادات Supabase.';
+  }
+  return raw;
+}
+
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) => {
   const { branding, pushToast } = usePlatform();
   const configured = isSupabaseConfigured();
@@ -36,14 +70,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
       return;
     }
 
+    const cleanEmail = email.replace(/\s+/g, '').toLowerCase();
+    setEmail(cleanEmail);
+
     setLoading(true);
     try {
       if (mode === 'signin') {
-        await SupabaseBackend.signIn(email.trim(), password);
+        await SupabaseBackend.signIn(cleanEmail, password);
         pushToast('تم تسجيل الدخول بنجاح');
       } else if (mode === 'signup') {
         const res = await SupabaseBackend.signUp(
-          email.trim(),
+          cleanEmail,
           password,
           fullName.trim(),
           jobTitle.trim()
@@ -57,12 +94,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
           setMode('signin');
         }
       } else {
-        await SupabaseBackend.resetPassword(email.trim());
+        await SupabaseBackend.resetPassword(cleanEmail);
         setInfoMsg('تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني.');
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'تعذر إتمام العملية، تحقق من البيانات.';
-      setErrorMsg(msg);
+      setErrorMsg(translateAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -205,11 +241,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
             </label>
             <input
               type="email"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               required
               dir="ltr"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@school.edu.sa"
+              placeholder="name@example.com"
               className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D9C9B5] rounded-xl text-left"
             />
           </div>
