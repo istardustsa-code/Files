@@ -9,6 +9,7 @@ import { AppShell } from './components/layout/AppShell';
 import { AuthScreen } from './components/auth/AuthScreen';
 import { LogoMark } from './components/common/LogoMark';
 import { ToastContainer } from './components/common/ToastContainer';
+import { GuestPortfolioView } from './components/views/guest/GuestPortfolioView';
 
 // Super Admin Views
 import { SuperAdminOverview } from './components/views/super-admin/SuperAdminOverview';
@@ -51,9 +52,20 @@ const WorkspaceRouter: React.FC = () => {
     managerNav,
     teacherNav,
     branding,
+    guestVisitSession,
   } = usePlatform();
 
   const [previewEntered, setPreviewEntered] = useState(false);
+
+  // Active Temporary Visit Code Guest View (strictly read-only, no signup required)
+  if (guestVisitSession) {
+    return (
+      <>
+        <GuestPortfolioView />
+        <ToastContainer />
+      </>
+    );
+  }
 
   // Loading state while verifying real Supabase session or loading RLS data
   if (isSupabaseLive && (authLoading || (session && workspaceLoading))) {

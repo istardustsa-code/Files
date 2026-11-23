@@ -1,6 +1,7 @@
 import {
   PRIVATE_FILES_BUCKET,
   PUBLIC_BRANDING_BUCKET,
+  sendAnonRpcKeepalive,
   supabase,
   verifySupabaseAuthEndpoint,
 } from './client';
@@ -13,6 +14,8 @@ import {
   mapProfileRow,
   mapSchoolRow,
   mapSectionRow,
+  mapVisitCodeRow,
+  mapVisitLogRow,
   type SupabaseAchievementRow,
   type SupabaseActivityLogRow,
   type SupabaseGroupRow,
@@ -22,11 +25,15 @@ import {
   type SupabasePortfolioSectionRow,
   type SupabaseProfileRow,
   type SupabaseSchoolRow,
+  type SupabaseTeacherVisitCodeRow,
+  type SupabaseTeacherVisitLogRow,
 } from './types';
 import type {
   AchievementItem,
   ActivityLogEntry,
   EducationalGroup,
+  GuestVisitSessionPayload,
+  GuestVisitTeacherSummary,
   NotificationItem,
   PlatformBranding,
   PlatformSettings,
@@ -35,6 +42,8 @@ import type {
   ReviewStatus,
   RolePermissionSet,
   School,
+  TeacherVisitCode,
+  TeacherVisitLog,
   UserAccount,
   UserRole,
 } from '../../types/platform';
@@ -49,6 +58,38 @@ function requireClient() {
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-\u0600-\u06FF]/g, '_');
+}
+
+const TEACHER_SUBSECTION_EXT_CATEGORY = '__teacher_subsections__';
+
+export function mergeSectionsWithTeacherExtensions(
+  rawSections: PortfolioSection[],
+  teacherId: string
+): PortfolioSection[] {
+  const extByParent = new Map<string, PortfolioSection['customFields']>();
+  rawSections.forEach((s) => {
+    if (s.category === TEACHER_SUBSECTION_EXT_CATEGORY && s.ownerId === teacherId) {
+      const existing = extByParent.get(s.iconName) ?? [];
+      extByParent.set(s.iconName, [...existing, ...s.customFields]);
+    }
+  });
+
+  return rawSections
+    .filter(
+      (s) =>
+        s.category !== TEACHER_SUBSECTION_EXT_CATEGORY &&
+        s.isActive &&
+        (!s.ownerId || s.ownerId === teacherId)
+    )
+    .sort((a, b) => a.order - b.order)
+    .map((sec) => {
+      const extraSubs = extByParent.get(sec.id);
+      if (!extraSubs || extraSubs.length === 0) return sec;
+      return {
+        ...sec,
+        customFields: [...sec.customFields, ...extraSubs],
+      };
+    });
 }
 
 export const SupabaseBackend = {
@@ -741,4 +782,135 @@ export const SupabaseBackend = {
     });
     if (error) throw error;
   },
+
+  // --------------------------------------------------------------------------
+  // Temporary Visit Codes (Teacher Control + Live Logs + Guest Read-Only View)
+  // --------------------------------------------------------------------------
+  async getOrCreateMyVisitCode(): Promise<TeacherVisitCode> {
+    const client = requireClient();
+    const { data, error } = await client
+      .rpc('get_or_create_my_visit_code')
+      .single<SupabaseTeacherVisitCodeRow>();
+    if (error) throw error;
+    return mapVisitCodeRow(data);
+  },
+
+  async getMyVisitLogs(teacherId: string): Promise<TeacherVisitLog[]> {
+    const client = requireClient();
+    const { data, error } = await client
+      .from('teacher_visit_logs')
+      .select('*')
+      .eq('teacher_id', teacherId)
+      .order('entered_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    return ((data ?? []) as SupabaseTeacherVisitLogRow[]).map(mapVisitLogRow);
+  },
+
+  async toggleMyVisitCode(nextActive: boolean): Promise<TeacherVisitCode> {
+    const client = requireClient();
+    const { data, error } = await client
+      .rpc('toggle_my_visit_code', { next_active: nextActive })
+      .single<SupabaseTeacherVisitCodeRow>();
+    if (error) throw error;
+    return mapVisitCodeRow(data);
+  },
+
+  async regenerateMyVisitCode(): Promise<TeacherVisitCode> {
+    const client = requireClient();
+    const { data, error } = await client
+      .rpc('regenerate_my_visit_code')
+      .single<SupabaseTeacherVisitCodeRow>();
+    if (error) throw error;
+    return mapVisitCodeRow(data);
+  },
+
+  async enterVisitSession(code: string, visitorName?: string): Promise<GuestVisitSessionPayload> {
+    const client = requireClient();
+    const { data, error } = await client.rpc('enter_visit_session', {
+      p_code: code.trim().toUpperCase(),
+      p_visitor_name: visitorName?.trim() || null,
+    });
+    if (error) throw error;
+
+    const raw = data as {
+      sessionToken: string;
+      enteredAt: string;
+      code: string;
+      teacher: GuestVisitTeacherSummary;
+      sections: SupabasePortfolioSectionRow[];
+      files: SupabasePortfolioFileRow[];
+      achievements: SupabaseAchievementRow[];
+    };
+
+    const mappedRawSections = (raw.sections ?? []).map(mapSectionRow);
+    return {
+      sessionToken: raw.sessionToken,
+      enteredAt: raw.enteredAt,
+      code: raw.code,
+      teacher: raw.teacher,
+      sections: mergeSectionsWithTeacherExtensions(mappedRawSections, raw.teacher.id),
+      files: (raw.files ?? []).map(mapFileRow),
+      achievements: (raw.achievements ?? []).map(mapAchievementRow),
+    };
+  },
+
+  async pingVisitSession(
+    code: string,
+    sessionToken: string,
+    teacherId: string
+  ): Promise<
+    | {
+        active: true;
+        sections: PortfolioSection[];
+        files: PortfolioFile[];
+        achievements: AchievementItem[];
+      }
+    | { active: false }
+  > {
+    const client = requireClient();
+    const { data, error } = await client.rpc('ping_visit_session', {
+      p_code: code.trim().toUpperCase(),
+      p_session_token: sessionToken,
+    });
+    if (error) throw error;
+
+    const raw = data as {
+      active: boolean;
+      sections?: SupabasePortfolioSectionRow[];
+      files?: SupabasePortfolioFileRow[];
+      achievements?: SupabaseAchievementRow[];
+    };
+
+    if (!raw?.active) {
+      return { active: false };
+    }
+
+    const mappedRawSections = (raw.sections ?? []).map(mapSectionRow);
+    return {
+      active: true,
+      sections: mergeSectionsWithTeacherExtensions(mappedRawSections, teacherId),
+      files: (raw.files ?? []).map(mapFileRow),
+      achievements: (raw.achievements ?? []).map(mapAchievementRow),
+    };
+  },
+
+  async endVisitSession(sessionToken: string): Promise<void> {
+    if (!supabase) return;
+    await supabase.rpc('end_visit_session', { p_session_token: sessionToken });
+  },
+
+  endVisitSessionKeepalive(sessionToken: string): void {
+    sendAnonRpcKeepalive('end_visit_session', { p_session_token: sessionToken });
+  },
+
+  async getGuestSignedFileUrl(storagePath: string, expiresInSeconds = 300): Promise<string> {
+    const client = requireClient();
+    const { data, error } = await client.storage
+      .from(PRIVATE_FILES_BUCKET)
+      .createSignedUrl(storagePath, expiresInSeconds);
+    if (error) throw error;
+    return data.signedUrl;
+  },
 };
+

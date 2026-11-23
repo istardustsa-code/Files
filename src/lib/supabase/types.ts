@@ -12,6 +12,8 @@ import type {
   ReviewStatus,
   RolePermissionSet,
   School,
+  TeacherVisitCode,
+  TeacherVisitLog,
   UserAccount,
   UserRole,
 } from '../../types/platform';
@@ -137,6 +139,28 @@ export interface SupabasePlatformConfigRow {
   permissions: Record<UserRole, RolePermissionSet>;
   settings: PlatformSettings;
   updated_at: string;
+}
+
+export interface SupabaseTeacherVisitCodeRow {
+  id: string;
+  teacher_id: string;
+  code: string;
+  is_active: boolean;
+  total_visits: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupabaseTeacherVisitLogRow {
+  id: string;
+  visit_code_id: string;
+  teacher_id: string;
+  session_token: string;
+  visitor_label: string;
+  entered_at: string;
+  last_seen_at: string;
+  ended_at: string | null;
+  is_live: boolean;
 }
 
 // ============================================================================
@@ -282,3 +306,30 @@ export function mapNotificationRow(
     category: row.category,
   };
 }
+
+export function mapVisitCodeRow(row: SupabaseTeacherVisitCodeRow): TeacherVisitCode {
+  return {
+    id: row.id,
+    teacherId: row.teacher_id,
+    code: row.code,
+    isActive: row.is_active,
+    totalVisits: Number(row.total_visits ?? 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function mapVisitLogRow(row: SupabaseTeacherVisitLogRow): TeacherVisitLog {
+  return {
+    id: row.id,
+    visitCodeId: row.visit_code_id,
+    teacherId: row.teacher_id,
+    sessionToken: row.session_token,
+    visitorLabel: row.visitor_label,
+    enteredAt: row.entered_at,
+    lastSeenAt: row.last_seen_at,
+    endedAt: row.ended_at ?? undefined,
+    isLive: Boolean(row.is_live),
+  };
+}
+

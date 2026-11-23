@@ -8,11 +8,13 @@ import {
   Bell,
   ArrowUpLeft,
   Lock,
+  Ticket,
 } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
 import { UploadFileModal } from '../../common/UploadFileModal';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
 import { FileTypeIconBox, ReviewStatusInline } from '../../common/FileTypeIndicator';
+import { VisitCodeModal, isVisitLogActiveNow } from './VisitCodeModal';
 import type { PortfolioFile } from '../../../types/platform';
 import {
   formatBytesArabic,
@@ -31,10 +33,16 @@ export const TeacherOverview: React.FC = () => {
     visibleNotifications,
     getTeacherCompletionPercent,
     setTeacherNav,
+    myVisitCode,
+    myVisitLogs,
   } = usePlatform();
 
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [visitModalOpen, setVisitModalOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<PortfolioFile | null>(null);
+  const liveVisitCount = myVisitLogs.filter((l) =>
+    isVisitLogActiveNow(l.lastSeenAt, l.isLive)
+  ).length;
 
   const activeFiles = visibleFiles.filter((f) => !f.isDeleted);
   const completionPct = getTeacherCompletionPercent(currentUser.id);
@@ -64,6 +72,33 @@ export const TeacherOverview: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setVisitModalOpen(true)}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl border transition-colors whitespace-nowrap ${
+              myVisitCode?.isActive
+                ? 'bg-[#A8B9A5]/20 border-[#556952]/60 text-[#3F573C] hover:bg-[#A8B9A5]/30'
+                : 'bg-[#F7F5F0] hover:bg-[#D9C9B5]/40 text-[#454943] border-[#D9C9B5]/80'
+            }`}
+          >
+            <Ticket size={16} className="text-[#556952]" />
+            <span>كود الزيارة المؤقتة</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-md text-[10px] font-semibold ${
+                liveVisitCount > 0
+                  ? 'bg-[#3F573C] text-white'
+                  : myVisitCode?.isActive
+                    ? 'bg-[#556952] text-white'
+                    : 'bg-white text-[#666560]'
+              }`}
+            >
+              {liveVisitCount > 0
+                ? 'متواجدة الآن'
+                : myVisitCode?.isActive
+                  ? 'مفعل'
+                  : 'متوقف'}
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => setTeacherNav('profile')}
@@ -252,6 +287,7 @@ export const TeacherOverview: React.FC = () => {
         file={visibleFiles.find((f) => f.id === previewFile?.id) ?? null}
         onClose={() => setPreviewFile(null)}
       />
+      <VisitCodeModal isOpen={visitModalOpen} onClose={() => setVisitModalOpen(false)} />
     </div>
   );
 };

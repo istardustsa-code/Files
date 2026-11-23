@@ -234,3 +234,45 @@ export type TeacherNavId =
   | 'my_files'
   | 'notifications'
   | 'profile';
+
+export interface TeacherVisitCode {
+  id: string;
+  teacherId: string;
+  code: string;
+  isActive: boolean;
+  totalVisits: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TeacherVisitLog {
+  id: string;
+  visitCodeId: string;
+  teacherId: string;
+  sessionToken: string;
+  visitorLabel: string;
+  enteredAt: string;
+  lastSeenAt: string;
+  endedAt?: string;
+  isLive: boolean;
+}
+
+export interface GuestVisitTeacherSummary {
+  id: string;
+  fullName: string;
+  jobTitle: string;
+  specialty?: string;
+  qualification?: string;
+  schoolName?: string;
+}
+
+export interface GuestVisitSessionPayload {
+  sessionToken: string;
+  enteredAt: string;
+  code: string;
+  teacher: GuestVisitTeacherSummary;
+  sections: PortfolioSection[];
+  files: PortfolioFile[];
+  achievements: AchievementItem[];
+}
+

@@ -14,11 +14,15 @@ import {
   DEMO_USERS,
 } from '../data/demoData';
 import { isSupabaseConfigured, supabase } from '../lib/supabase/client';
-import { SupabaseBackend } from '../lib/supabase/repositories';
+import {
+  mergeSectionsWithTeacherExtensions,
+  SupabaseBackend,
+} from '../lib/supabase/repositories';
 import type {
   AchievementItem,
   ActivityLogEntry,
   EducationalGroup,
+  GuestVisitSessionPayload,
   ManagerNavId,
   NotificationItem,
   PlatformBranding,
@@ -30,6 +34,8 @@ import type {
   School,
   SuperAdminNavId,
   TeacherNavId,
+  TeacherVisitCode,
+  TeacherVisitLog,
   UserAccount,
   UserRole,
 } from '../types/platform';
@@ -160,6 +166,18 @@ interface PlatformContextValue {
   updatePermissions: (role: UserRole, updates: Partial<RolePermissionSet>) => Promise<void>;
   updateSettings: (updates: Partial<PlatformSettings>) => Promise<void>;
 
+  // Temporary Visit Code (Teacher Control & Guest Read-Only Session)
+  myVisitCode: TeacherVisitCode | null;
+  myVisitLogs: TeacherVisitLog[];
+  visitCodeLoading: boolean;
+  loadMyVisitData: (silent?: boolean) => Promise<void>;
+  toggleMyVisitCode: (nextActive: boolean) => Promise<void>;
+  regenerateMyVisitCode: () => Promise<void>;
+  guestVisitSession: GuestVisitSessionPayload | null;
+  enterGuestVisitSession: (code: string, visitorName?: string) => Promise<void>;
+  exitGuestVisitSession: () => Promise<void>;
+  getGuestSignedFileUrl: (file: PortfolioFile) => Promise<string | null>;
+
   // Helpers & Toasts
   getTeacherCompletionPercent: (teacherId: string) => number;
   toasts: ToastMessage[];
@@ -206,6 +224,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [teacherNav, setTeacherNav] = useState<TeacherNavId>('overview');
   const [globalSearch, setGlobalSearch] = useState('');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Temporary Visit Codes & Guest Read-Only Session State
+  const [myVisitCode, setMyVisitCode] = useState<TeacherVisitCode | null>(null);
+  const [myVisitLogs, setMyVisitLogs] = useState<TeacherVisitLog[]>([]);
+  const [visitCodeLoading, setVisitCodeLoading] = useState(false);
+  const [guestVisitSession, setGuestVisitSession] = useState<GuestVisitSessionPayload | null>(null);
 
   const pushToast = useCallback((text: string, tone: ToastMessage['tone'] = 'success') => {
     const id = `tst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -295,6 +319,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setAchievements([]);
         setNotifications([]);
         setActivityLogs([]);
+        setMyVisitCode(null);
+        setMyVisitLogs([]);
       }
     });
 
@@ -1636,6 +1662,328 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return Math.round((coveredCount / activeTarget.length) * 100);
   };
 
+  // --------------------------------------------------------------------------
+  // Temporary Visit Codes (Teacher Control + Live Logs + Guest Read-Only View)
+  // --------------------------------------------------------------------------
+  const loadMyVisitData = useCallback(
+    async (silent = false) => {
+      if (isSupabaseLive) {
+        if (!session?.user?.id) return;
+        if (!silent) setVisitCodeLoading(true);
+        try {
+          const [codeRow, logs] = await Promise.all([
+            SupabaseBackend.getOrCreateMyVisitCode(),
+            SupabaseBackend.getMyVisitLogs(session.user.id),
+          ]);
+          setMyVisitCode(codeRow);
+          setMyVisitLogs(logs);
+        } catch (err) {
+          if (!silent) {
+            pushToast(
+              err instanceof Error ? err.message : 'تعذر تحميل بيانات كود الزيارة المؤقتة',
+              'warning'
+            );
+          }
+        } finally {
+          if (!silent) setVisitCodeLoading(false);
+        }
+        return;
+      }
+
+      setMyVisitCode((prev) => {
+        if (prev && prev.teacherId === currentUser.id) return prev;
+        const now = new Date().toISOString();
+        return {
+          id: `vc-${currentUser.id}`,
+          teacherId: currentUser.id,
+          code: 'VST-482910',
+          isActive: false,
+          totalVisits: 0,
+          createdAt: now,
+          updatedAt: now,
+        };
+      });
+    },
+    [isSupabaseLive, session?.user?.id, currentUser.id, pushToast]
+  );
+
+  // Auto-fetch teacher's visit code when teacher logs in
+  useEffect(() => {
+    if (currentRole !== 'teacher') return;
+    if (isSupabaseLive && (!session?.user?.id || !workspaceLoaded)) return;
+    void loadMyVisitData(true);
+  }, [currentRole, isSupabaseLive, session?.user?.id, workspaceLoaded, loadMyVisitData]);
+
+  const toggleMyVisitCode = async (nextActive: boolean) => {
+    if (isSupabaseLive) {
+      setVisitCodeLoading(true);
+      try {
+        const updated = await SupabaseBackend.toggleMyVisitCode(nextActive);
+        setMyVisitCode(updated);
+        if (session?.user?.id) {
+          const logs = await SupabaseBackend.getMyVisitLogs(session.user.id);
+          setMyVisitLogs(logs);
+        }
+        pushToast(
+          nextActive
+            ? 'تم تفعيل كود الزيارة المؤقتة — يمكن للمديرة الدخول الآن للاطلاع فقط'
+            : 'تم إيقاف كود الزيارة المؤقتة وإغلاق أي جلسة مشاهدة حالية',
+          nextActive ? 'success' : 'info'
+        );
+      } catch (err) {
+        pushToast(
+          err instanceof Error ? err.message : 'تعذر تحديث حالة كود الزيارة المؤقتة',
+          'warning'
+        );
+      } finally {
+        setVisitCodeLoading(false);
+      }
+      return;
+    }
+
+    const now = new Date().toISOString();
+    setMyVisitCode((prev) =>
+      prev
+        ? { ...prev, isActive: nextActive, updatedAt: now }
+        : {
+            id: `vc-${currentUser.id}`,
+            teacherId: currentUser.id,
+            code: 'VST-482910',
+            isActive: nextActive,
+            totalVisits: 0,
+            createdAt: now,
+            updatedAt: now,
+          }
+    );
+    if (!nextActive) {
+      setMyVisitLogs((prev) =>
+        prev.map((log) => (log.isLive ? { ...log, isLive: false, endedAt: log.endedAt ?? now } : log))
+      );
+    }
+    pushToast(
+      nextActive
+        ? 'تم تفعيل كود الزيارة المؤقتة — يمكن للمديرة الدخول الآن للاطلاع فقط'
+        : 'تم إيقاف كود الزيارة المؤقتة',
+      nextActive ? 'success' : 'info'
+    );
+  };
+
+  const regenerateMyVisitCode = async () => {
+    if (isSupabaseLive) {
+      setVisitCodeLoading(true);
+      try {
+        const updated = await SupabaseBackend.regenerateMyVisitCode();
+        setMyVisitCode(updated);
+        if (session?.user?.id) {
+          const logs = await SupabaseBackend.getMyVisitLogs(session.user.id);
+          setMyVisitLogs(logs);
+        }
+        pushToast('تم إصدار كود زيارة مؤقتة جديد وإلغاء الكود السابق', 'info');
+      } catch (err) {
+        pushToast(
+          err instanceof Error ? err.message : 'تعذر إصدار كود جديد',
+          'warning'
+        );
+      } finally {
+        setVisitCodeLoading(false);
+      }
+      return;
+    }
+
+    const randomCode = `VST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    setMyVisitCode((prev) =>
+      prev
+        ? { ...prev, code: randomCode, updatedAt: now }
+        : {
+            id: `vc-${currentUser.id}`,
+            teacherId: currentUser.id,
+            code: randomCode,
+            isActive: false,
+            totalVisits: 0,
+            createdAt: now,
+            updatedAt: now,
+          }
+    );
+    setMyVisitLogs((prev) =>
+      prev.map((log) => (log.isLive ? { ...log, isLive: false, endedAt: log.endedAt ?? now } : log))
+    );
+    pushToast('تم إصدار كود زيارة مؤقتة جديد', 'info');
+  };
+
+  const enterGuestVisitSession = async (code: string, visitorName?: string) => {
+    const cleanCode = code.trim().toUpperCase();
+    if (!cleanCode) {
+      throw new Error('يرجى إدخال كود الزيارة المؤقتة.');
+    }
+
+    if (isSupabaseLive) {
+      const payload = await SupabaseBackend.enterVisitSession(cleanCode, visitorName);
+      setGuestVisitSession(payload);
+      pushToast(`مرحباً بكِ في ملف المعلمة ${payload.teacher.fullName} (للاطلاع فقط)`);
+      return;
+    }
+
+    // Local preview fallback when Supabase env vars are not connected
+    const previewTeacher =
+      users.find((u) => u.role === 'teacher' && u.isActive) ?? DEMO_USERS[3];
+    const activeCode =
+      myVisitCode && myVisitCode.teacherId === previewTeacher.id
+        ? myVisitCode
+        : {
+            id: `vc-${previewTeacher.id}`,
+            teacherId: previewTeacher.id,
+            code: 'VST-482910',
+            isActive: true,
+            totalVisits: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+
+    if (activeCode.code.toUpperCase() !== cleanCode) {
+      throw new Error('كود الزيارة المؤقتة غير صحيح.');
+    }
+    if (!activeCode.isActive) {
+      throw new Error('كود الزيارة المؤقتة غير مفعل حالياً من قِبل المعلمة.');
+    }
+
+    const now = new Date().toISOString();
+    const sessionToken = `guest-${Date.now()}`;
+    const school = schools.find((s) => s.id === previewTeacher.schoolId);
+    const mergedSections = mergeSectionsWithTeacherExtensions(rawSections, previewTeacher.id);
+    const teacherFiles = files.filter((f) => f.ownerId === previewTeacher.id && !f.isDeleted);
+    const teacherAchievements = achievements.filter((a) => a.ownerId === previewTeacher.id);
+
+    setMyVisitCode({
+      ...activeCode,
+      totalVisits: activeCode.totalVisits + 1,
+      updatedAt: now,
+    });
+    setMyVisitLogs((prev) => [
+      {
+        id: `vlog-${Date.now()}`,
+        visitCodeId: activeCode.id,
+        teacherId: previewTeacher.id,
+        sessionToken,
+        visitorLabel: visitorName?.trim() || 'زائرة بالكود المؤقت',
+        enteredAt: now,
+        lastSeenAt: now,
+        isLive: true,
+      },
+      ...prev,
+    ]);
+
+    setGuestVisitSession({
+      sessionToken,
+      enteredAt: now,
+      code: activeCode.code,
+      teacher: {
+        id: previewTeacher.id,
+        fullName: previewTeacher.fullName,
+        jobTitle: previewTeacher.jobTitle,
+        specialty: previewTeacher.specialty,
+        qualification: previewTeacher.qualification,
+        schoolName: school?.name,
+      },
+      sections: mergedSections,
+      files: teacherFiles,
+      achievements: teacherAchievements,
+    });
+    pushToast(`مرحباً بكِ في ملف المعلمة ${previewTeacher.fullName} (للاطلاع فقط)`);
+  };
+
+  const exitGuestVisitSession = useCallback(async () => {
+    const active = guestVisitSession;
+    setGuestVisitSession(null);
+    if (!active) return;
+
+    if (isSupabaseLive) {
+      await SupabaseBackend.endVisitSession(active.sessionToken).catch(() => undefined);
+    } else {
+      const now = new Date().toISOString();
+      setMyVisitLogs((prev) =>
+        prev.map((log) =>
+          log.sessionToken === active.sessionToken
+            ? { ...log, isLive: false, endedAt: now }
+            : log
+        )
+      );
+    }
+    pushToast('تم إنهاء جلسة الزيارة المؤقتة بنجاح', 'info');
+  }, [guestVisitSession, isSupabaseLive, pushToast]);
+
+  const getGuestSignedFileUrl = async (file: PortfolioFile): Promise<string | null> => {
+    if (file.localPreviewUrl) return file.localPreviewUrl;
+    if (!isSupabaseLive) return null;
+    try {
+      return await SupabaseBackend.getGuestSignedFileUrl(file.storagePath, 300);
+    } catch (err) {
+      pushToast(
+        err instanceof Error ? err.message : 'تعذر فتح الملف — ربما تم إيقاف كود الزيارة',
+        'warning'
+      );
+      return null;
+    }
+  };
+
+  // Heartbeat & Pagehide cleanup while guest visit session is active
+  useEffect(() => {
+    if (!guestVisitSession) return;
+    const { code, sessionToken, teacher } = guestVisitSession;
+
+    if (!isSupabaseLive) {
+      const localInterval = window.setInterval(() => {
+        if (myVisitCode && (!myVisitCode.isActive || myVisitCode.code !== code)) {
+          setGuestVisitSession(null);
+          pushToast('تم إيقاف كود الزيارة المؤقتة من قِبل المعلمة وانتهت جلسة الاطلاع.', 'warning');
+          return;
+        }
+        const now = new Date().toISOString();
+        setMyVisitLogs((prev) =>
+          prev.map((l) => (l.sessionToken === sessionToken ? { ...l, lastSeenAt: now } : l))
+        );
+      }, 15000);
+      return () => window.clearInterval(localInterval);
+    }
+
+    const ping = async () => {
+      try {
+        const res = await SupabaseBackend.pingVisitSession(code, sessionToken, teacher.id);
+        if (!res.active) {
+          setGuestVisitSession(null);
+          pushToast('تم إيقاف كود الزيارة المؤقتة من قِبل المعلمة وانتهت جلسة الاطلاع.', 'warning');
+          return;
+        }
+        setGuestVisitSession((prev) =>
+          prev && prev.sessionToken === sessionToken
+            ? {
+                ...prev,
+                sections: res.sections,
+                files: res.files,
+                achievements: res.achievements,
+              }
+            : prev
+        );
+      } catch {
+        // Ignore transient offline blip and retry on next heartbeat
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void ping();
+    }, 15000);
+
+    const handlePageHide = () => {
+      SupabaseBackend.endVisitSessionKeepalive(sessionToken);
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [guestVisitSession?.sessionToken, guestVisitSession?.code, guestVisitSession?.teacher.id, isSupabaseLive, myVisitCode?.isActive, myVisitCode?.code, pushToast]);
+
   return (
     <PlatformContext.Provider
       value={{
@@ -1712,6 +2060,16 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         updatePermissions,
         updateSettings,
         getTeacherCompletionPercent,
+        myVisitCode,
+        myVisitLogs,
+        visitCodeLoading,
+        loadMyVisitData,
+        toggleMyVisitCode,
+        regenerateMyVisitCode,
+        guestVisitSession,
+        enterGuestVisitSession,
+        exitGuestVisitSession,
+        getGuestSignedFileUrl,
         toasts,
         pushToast,
         dismissToast,

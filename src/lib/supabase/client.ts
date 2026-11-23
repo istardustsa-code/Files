@@ -98,3 +98,22 @@ export function getSupabaseDiagnostics() {
     rlsStatus: 'سياسات Row Level Security معرفة في supabase/migrations/',
   };
 }
+
+export function sendAnonRpcKeepalive(rpcName: string, body: Record<string, unknown>): void {
+  if (!isSupabaseConfigured()) return;
+  try {
+    void fetch(`${supabaseUrl}/rest/v1/rpc/${rpcName}`, {
+      method: 'POST',
+      keepalive: true,
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabasePublicKey,
+        Authorization: `Bearer ${supabasePublicKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // Ignore unload network interruptions
+  }
+}
+

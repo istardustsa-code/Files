@@ -15,6 +15,7 @@ import {
   ImagePlus,
   FilePlus2,
   PenLine,
+  Ticket,
   X,
 } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
@@ -23,6 +24,7 @@ import { FilePreviewModal } from '../../common/FilePreviewModal';
 import { FileTypeIconBox, ReviewStatusInline } from '../../common/FileTypeIndicator';
 import { Modal } from '../../common/Modal';
 import { EmptyState } from '../../common/EmptyState';
+import { VisitCodeModal, isVisitLogActiveNow } from './VisitCodeModal';
 import type {
   AchievementItem,
   CustomFieldDefinition,
@@ -56,10 +58,16 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     deleteAchievement,
     uploadFiles,
     toggleManagerViewPermission,
+    myVisitCode,
+    myVisitLogs,
     pushToast,
   } = usePlatform();
 
   const allowManagerView = currentUser.allowManagerView !== false;
+  const [visitModalOpen, setVisitModalOpen] = useState(false);
+  const liveVisitCount = myVisitLogs.filter((l) =>
+    isVisitLogActiveNow(l.lastSeenAt, l.isLive)
+  ).length;
 
   const [uploadSectionId, setUploadSectionId] = useState<string | undefined>(undefined);
   const [uploadSubSectionId, setUploadSubSectionId] = useState<string | undefined>(undefined);
@@ -539,6 +547,33 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setVisitModalOpen(true)}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-medium rounded-xl border transition-colors whitespace-nowrap ${
+              myVisitCode?.isActive
+                ? 'bg-[#A8B9A5]/20 border-[#556952]/60 text-[#3F573C] hover:bg-[#A8B9A5]/30'
+                : 'bg-white border-[#D9C9B5] text-[#454943] hover:bg-[#F7F5F0]'
+            }`}
+          >
+            <Ticket size={15} className="text-[#556952]" />
+            <span>كود الزيارة المؤقتة</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-md text-[10px] font-semibold ${
+                liveVisitCount > 0
+                  ? 'bg-[#3F573C] text-white'
+                  : myVisitCode?.isActive
+                    ? 'bg-[#556952] text-white'
+                    : 'bg-[#F7F5F0] text-[#666560]'
+              }`}
+            >
+              {liveVisitCount > 0
+                ? 'زائرة متواجدة الآن'
+                : myVisitCode?.isActive
+                  ? 'مفعل'
+                  : 'متوقف'}
+            </span>
+          </button>
           {settings.allowTeacherCustomSections !== false &&
             (focusMode === 'all' || focusMode === 'custom_sections') && (
               <button
@@ -1245,6 +1280,8 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
           </div>
         )}
       </Modal>
+
+      <VisitCodeModal isOpen={visitModalOpen} onClose={() => setVisitModalOpen(false)} />
     </div>
   );
 };
