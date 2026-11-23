@@ -260,28 +260,60 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
             </div>
           </form>
         ) : (
-          <div className="space-y-3 text-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#D9C9B5]/50">
-              <div className="flex items-center gap-2 text-xs text-[#666560]">
-                <FileText size={14} />
-                <span>القسم: {sectionBreadcrumb}</span>
-                <span aria-hidden="true">·</span>
-                <span className="tabular-nums">تاريخ الرفع: {formatDateTimeArabic(file.uploadedAt)}</span>
+          <div className="space-y-4 text-sm">
+            {/* Structured File Metadata Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl bg-[#F7F5F0]/70 border border-[#D9C9B5]/60 text-xs">
+              <div>
+                <span className="text-[#666560] block mb-0.5">القسم والمسار</span>
+                <span className="font-medium text-[#454943]">{sectionBreadcrumb}</span>
               </div>
-              <ReviewStatusInline status={file.reviewStatus} />
+              <div>
+                <span className="text-[#666560] block mb-0.5">حالة المراجعة</span>
+                <ReviewStatusInline status={file.reviewStatus} />
+              </div>
+              <div>
+                <span className="text-[#666560] block mb-0.5">نوع الملف وحجمه</span>
+                <span className="font-medium text-[#454943] tabular-nums">
+                  {getFileTypeLabelArabic(file.fileType)} · {formatBytesArabic(file.sizeBytes)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#666560] block mb-0.5">تاريخ الرفع</span>
+                <span className="font-medium text-[#454943] tabular-nums">
+                  {formatDateTimeArabic(file.uploadedAt)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#666560] block mb-0.5">اسم الملف الأصلي</span>
+                <span className="font-medium text-[#454943] break-all">
+                  {file.originalFileName}
+                </span>
+              </div>
+              {owner && (
+                <div>
+                  <span className="text-[#666560] block mb-0.5">صاحب الملف</span>
+                  <span className="font-medium text-[#454943]">{owner.fullName}</span>
+                </div>
+              )}
             </div>
 
-            <div>
-              <p className="text-xs font-medium text-[#666560] mb-1">الوصف</p>
-              <p className="text-sm text-[#454943] leading-relaxed">
-                {file.description || 'لا يوجد وصف مسجل لهذا الملف.'}
+            {/* Written Text / Description Card */}
+            <div className="p-4 rounded-xl bg-white border border-[#D9C9B5]/70 space-y-1.5">
+              <p className="text-xs font-semibold text-[#556952] flex items-center gap-1.5">
+                <FileText size={13} />
+                <span>النص والملاحظات المكتوبة مع الملف</span>
+              </p>
+              <p className="text-sm text-[#454943] leading-relaxed whitespace-pre-wrap">
+                {file.description || 'لا توجد كتابة أو ملاحظات مسجلة مع هذا الملف.'}
               </p>
             </div>
 
             {file.reviewNote && (
               <div className="p-3.5 rounded-xl bg-[#F7F5F0] border border-[#D9C9B5]/80">
                 <p className="text-xs font-semibold text-[#454943] mb-1">ملاحظة المراجعة</p>
-                <p className="text-xs text-[#666560] leading-relaxed">{file.reviewNote}</p>
+                <p className="text-xs text-[#666560] leading-relaxed whitespace-pre-wrap">
+                  {file.reviewNote}
+                </p>
               </div>
             )}
           </div>

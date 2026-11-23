@@ -89,7 +89,10 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
     if (valid.length > 0) {
       setSelectedFiles((prev) => [...prev, ...valid]);
       if (valid.length === 1 && !customTitle) {
-        setCustomTitle(valid[0].name.replace(/\.[^/.]+$/, ''));
+        const base = valid[0].name.replace(/\.[^/.]+$/, '');
+        if (base.toLowerCase() !== 'image') {
+          setCustomTitle(base);
+        }
       }
     }
   };
@@ -112,12 +115,13 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
     }
 
     uploadFiles(
-      selectedFiles.map((file) => ({
+      selectedFiles.map((file, idx) => ({
         file,
-        title:
-          selectedFiles.length === 1 && customTitle.trim()
+        title: customTitle.trim()
+          ? selectedFiles.length === 1
             ? customTitle.trim()
-            : file.name.replace(/\.[^/.]+$/, ''),
+            : `${customTitle.trim()} (${idx + 1})`
+          : file.name.replace(/\.[^/.]+$/, ''),
         description,
         sectionId: targetSecId,
         customFieldValues,
@@ -260,20 +264,18 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
             </div>
           )}
 
-          {selectedFiles.length <= 1 && (
-            <div className={availableSubSections.length > 0 ? 'sm:col-span-2' : ''}>
-              <label className="block text-xs font-medium text-[#454943] mb-1.5">
-                عنوان الملف أو المرفق
-              </label>
-              <input
-                type="text"
-                value={customTitle}
-                onChange={(e) => setCustomTitle(e.target.value)}
-                placeholder="مثال: شهادة برنامج التعلم النشط أو صورة النشاط"
-                className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943] placeholder:text-[#85847E]"
-              />
-            </div>
-          )}
+          <div className={availableSubSections.length > 0 ? 'sm:col-span-2' : ''}>
+            <label className="block text-xs font-medium text-[#454943] mb-1.5">
+              اسم الملف أو العنوان المطلوب
+            </label>
+            <input
+              type="text"
+              value={customTitle}
+              onChange={(e) => setCustomTitle(e.target.value)}
+              placeholder="مثال: شهادة برنامج التعلم النشط أو صورة النشاط"
+              className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943] placeholder:text-[#85847E]"
+            />
+          </div>
         </div>
 
         {selectedSubSection?.placeholder && (

@@ -63,6 +63,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
   const [uploadSubSectionId, setUploadSubSectionId] = useState<string | undefined>(undefined);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<PortfolioFile | null>(null);
+  const [previewNote, setPreviewNote] = useState<AchievementItem | null>(null);
 
   // Selected sub-section workspace modal state
   const [activeSubTarget, setActiveSubTarget] = useState<{
@@ -178,7 +179,10 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     if (valid.length > 0) {
       setSubFilesQueue((prev) => [...prev, ...valid]);
       if (valid.length === 1 && !subFileTitle) {
-        setSubFileTitle(valid[0].name.replace(/\.[^/.]+$/, ''));
+        const base = valid[0].name.replace(/\.[^/.]+$/, '');
+        if (base.toLowerCase() !== 'image') {
+          setSubFileTitle(base);
+        }
       }
     }
   };
@@ -192,13 +196,15 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     }
 
     const { section, sub } = resolvedSubTarget;
+    const cleanTitle = subFileTitle.trim();
     await uploadFiles(
-      subFilesQueue.map((file) => ({
+      subFilesQueue.map((file, idx) => ({
         file,
-        title:
-          subFilesQueue.length === 1 && subFileTitle.trim()
-            ? subFileTitle.trim()
-            : file.name.replace(/\.[^/.]+$/, ''),
+        title: cleanTitle
+          ? subFilesQueue.length === 1
+            ? cleanTitle
+            : `${cleanTitle} (${idx + 1})`
+          : file.name.replace(/\.[^/.]+$/, ''),
         description: subFileNote.trim(),
         sectionId: section.id,
         customFieldValues: {
@@ -758,55 +764,49 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
               </div>
             )}
 
-            {/* Existing Files & Notes inside this sub-section */}
+            {/* Saved Items inside this sub-section: single clean title box per item */}
             {(activeModalFiles.length > 0 || activeModalNotes.length > 0) && (
-              <div className="space-y-3">
-                {activeModalFiles.length > 0 && (
-                  <div className="border border-[#D9C9B5]/70 rounded-xl p-3.5 space-y-1">
-                    <h4 className="text-xs font-semibold text-[#454943] pb-1">
-                      الملفات والصور المرفقة ({activeModalFiles.length})
-                    </h4>
-                    <div className="divide-y divide-[#D9C9B5]/40">
-                      {activeModalFiles.map((file) => renderFileRow(file))}
-                    </div>
-                  </div>
-                )}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-[#454943]">
+                    العناصر المحفوظة ({activeModalFiles.length + activeModalNotes.length})
+                  </h4>
+                  <span className="text-[11px] text-[#666560]">
+                    اضغطي على أي مربع لعرض كل البيانات والتفاصيل
+                  </span>
+                </div>
 
-                {activeModalNotes.length > 0 && (
-                  <div className="border border-[#D9C9B5]/70 rounded-xl p-3.5 space-y-2.5 bg-[#F7F5F0]/40">
-                    <h4 className="text-xs font-semibold text-[#454943]">
-                      الكتابات والملاحظات المحفوظة ({activeModalNotes.length})
-                    </h4>
-                    <div className="space-y-2">
-                      {activeModalNotes.map((n) => (
-                        <div
-                          key={n.id}
-                          className="bg-white border border-[#D9C9B5]/60 rounded-xl p-3 space-y-1"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-medium text-[#454943]">{n.title}</p>
-                            <button
-                              type="button"
-                              onClick={() => void deleteAchievement(n.id)}
-                              className="text-[#85847E] hover:text-[#8A5E56] p-0.5 shrink-0"
-                              aria-label="حذف النص"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                          {n.description && (
-                            <p className="text-xs text-[#666560] whitespace-pre-wrap leading-relaxed">
-                              {n.description}
-                            </p>
-                          )}
-                          <p className="text-[11px] text-[#85847E] tabular-nums">
-                            {formatDateArabic(n.date)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {activeModalFiles.map((file) => (
+                    <button
+                      key={file.id}
+                      type="button"
+                      onClick={() => setPreviewFile(file)}
+                      className="group bg-white border border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50 rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2.5 transition-all hover:shadow-xs"
+                    >
+                      <FileTypeIconBox fileType={file.fileType} size="sm" />
+                      <p className="text-xs sm:text-[13px] font-semibold text-[#454943] line-clamp-2 leading-snug w-full">
+                        {file.title}
+                      </p>
+                    </button>
+                  ))}
+
+                  {activeModalNotes.map((n) => (
+                    <button
+                      key={n.id}
+                      type="button"
+                      onClick={() => setPreviewNote(n)}
+                      className="group bg-white border border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50 rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2.5 transition-all hover:shadow-xs"
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-[#A8B9A5]/25 text-[#3F573C] flex items-center justify-center shrink-0">
+                        <PenLine size={17} />
+                      </div>
+                      <p className="text-xs sm:text-[13px] font-semibold text-[#454943] line-clamp-2 leading-snug w-full">
+                        {n.title}
+                      </p>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -917,20 +917,18 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                     </div>
                   )}
 
-                  {subFilesQueue.length <= 1 && (
-                    <div>
-                      <label className="block text-xs font-medium text-[#454943] mb-1">
-                        عنوان المرفق
-                      </label>
-                      <input
-                        type="text"
-                        value={subFileTitle}
-                        onChange={(e) => setSubFileTitle(e.target.value)}
-                        placeholder={`مثال: ${resolvedSubTarget.sub.label}`}
-                        className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl"
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-xs font-medium text-[#454943] mb-1">
+                      اسم الملف المطلوب (سيظهر على المربع)
+                    </label>
+                    <input
+                      type="text"
+                      value={subFileTitle}
+                      onChange={(e) => setSubFileTitle(e.target.value)}
+                      placeholder={`مثال: ${resolvedSubTarget.sub.label} — الأسبوع الأول`}
+                      className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl"
+                    />
+                  </div>
 
                   <div>
                     <label className="block text-xs font-medium text-[#454943] mb-1">
@@ -1113,6 +1111,60 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
         file={visibleFiles.find((f) => f.id === previewFile?.id) ?? null}
         onClose={() => setPreviewFile(null)}
       />
+
+      {/* Standalone Text Note Detail Modal */}
+      <Modal
+        isOpen={Boolean(previewNote)}
+        onClose={() => setPreviewNote(null)}
+        title={previewNote?.title ?? ''}
+        subtitle={
+          previewNote
+            ? `${
+                visibleSections.find((s) => s.id === previewNote.sectionId)?.title ?? 'قسم عام'
+              }${
+                previewNote.customFieldValues?._subSectionLabel
+                  ? ` ← ${previewNote.customFieldValues._subSectionLabel}`
+                  : ''
+              } · ${formatDateArabic(previewNote.date)}`
+            : undefined
+        }
+      >
+        {previewNote && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl bg-[#F7F5F0]/60 border border-[#D9C9B5]/70 space-y-1.5">
+              <p className="text-xs font-semibold text-[#556952] flex items-center gap-1.5">
+                <PenLine size={13} />
+                <span>المحتوى النصي والتفاصيل</span>
+              </p>
+              <p className="text-sm text-[#454943] whitespace-pre-wrap leading-relaxed">
+                {previewNote.description || 'لا توجد تفاصيل إضافية مسجلة.'}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-[#D9C9B5]/60">
+              <button
+                type="button"
+                onClick={async () => {
+                  const id = previewNote.id;
+                  setPreviewNote(null);
+                  await deleteAchievement(id);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-[#8A5E56] hover:bg-[#D8BDB7]/30 rounded-lg"
+              >
+                <Trash2 size={14} />
+                <span>حذف التوثيق</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewNote(null)}
+                className="px-4 py-2 text-xs sm:text-sm font-medium bg-[#454943] text-white rounded-lg"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
