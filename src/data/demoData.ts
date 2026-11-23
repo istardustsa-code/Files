@@ -761,7 +761,7 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, RolePermissionSet> = {
 };
 
 export const DEFAULT_SETTINGS: PlatformSettings = {
-  maxFileSizeMb: 25,
+  maxFileSizeMb: 200,
   allowedFileTypes: ['pdf', 'word', 'powerpoint', 'excel', 'image'],
   allowTeacherCustomSections: true,
   requireManagerReviewForCompletion: true,

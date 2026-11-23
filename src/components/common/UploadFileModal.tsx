@@ -213,7 +213,7 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
             اسحبي عدة ملفات أو صور هنا، أو اختاري من الأزرار بالأسفل
           </p>
           <p className="text-xs text-[#666560] mt-1 tabular-nums">
-            يمكنك إضافة أكثر من صورة وأكثر من مرفق معاً · حتى {settings.maxFileSizeMb} م.ب للملف
+            يمكنك إضافة أكثر من صورة وأكثر من مرفق معاً أو ملفات كبيرة (+100 صفحة) · حتى {settings.maxFileSizeMb} م.ب للملف
           </p>
           <div
             className="mt-3.5 flex flex-wrap items-center justify-center gap-2.5"

@@ -71,14 +71,14 @@ export const SettingsView: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-[#454943] mb-1">
-              الحد الأقصى لحجم الملف الواحد (ميجابايت)
+              الحد الأقصى لحجم الملف الواحد (ميجابايت — يدعم الملفات الكبيرة +100 صفحة)
             </label>
             <input
               type="number"
               min={1}
-              max={200}
+              max={500}
               value={maxFileSizeMb}
-              onChange={(e) => setMaxFileSizeMb(Number(e.target.value) || 25)}
+              onChange={(e) => setMaxFileSizeMb(Number(e.target.value) || 200)}
               className="w-full px-3.5 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl font-mono-num"
             />
           </div>

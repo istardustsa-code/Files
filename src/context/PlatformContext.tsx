@@ -40,6 +40,10 @@ import type {
   UserRole,
 } from '../types/platform';
 import { detectFileCategory } from '../utils/formatters';
+import {
+  prepareFileForPortfolioUpload,
+  SUPABASE_SAFE_SINGLE_OBJECT_BYTES,
+} from '../utils/pdfLargeFile';
 
 export interface ToastMessage {
   id: string;
@@ -114,9 +118,17 @@ interface PlatformContextValue {
     targetSectionId: string,
     targetSubSectionId?: string
   ) => Promise<void>;
+  batchMoveFilesToSection: (
+    fileIds: string[],
+    targetSectionId: string,
+    targetSubSectionId?: string
+  ) => Promise<void>;
   softDeleteFile: (fileId: string) => Promise<void>;
+  batchSoftDeleteFiles: (fileIds: string[]) => Promise<void>;
   restoreFile: (fileId: string) => Promise<void>;
+  batchRestoreFiles: (fileIds: string[]) => Promise<void>;
   permanentlyDeleteFile: (fileId: string) => Promise<void>;
+  batchPermanentlyDeleteFiles: (fileIds: string[]) => Promise<void>;
   reviewFile: (fileId: string, status: ReviewStatus, note: string) => Promise<void>;
 
   // Achievement operations
@@ -586,20 +598,55 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // File Operations
   // --------------------------------------------------------------------------
   const uploadFiles = async (items: UploadFileInput[]) => {
+    const hasLargeItem = items.some((i) => i.file.size > 15 * 1024 * 1024);
+    if (hasLargeItem) {
+      pushToast('جاري تجهيز ورفع الملف الكبير... يرجى الانتظار قليلاً', 'info');
+    }
+
+    const preparedItems: UploadFileInput[] = [];
+    let splitPerformed = false;
+
+    for (const item of items) {
+      const prepared = await prepareFileForPortfolioUpload(
+        item.file,
+        SUPABASE_SAFE_SINGLE_OBJECT_BYTES
+      );
+      if (prepared.wasSplitPdf && prepared.files.length > 1) {
+        splitPerformed = true;
+        const sharedBundleId =
+          item.customFieldValues?._bundleId ||
+          `bnd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        prepared.files.forEach((partFile) => {
+          preparedItems.push({
+            ...item,
+            file: partFile,
+            customFieldValues: {
+              ...(item.customFieldValues ?? {}),
+              _bundleId: sharedBundleId,
+              ...(prepared.totalPages ? { _totalPages: String(prepared.totalPages) } : {}),
+            },
+          });
+        });
+      } else {
+        preparedItems.push(item);
+      }
+    }
+
     if (isSupabaseLive) {
       try {
-        const uploaded = await Promise.all(
-          items.map((item) =>
-            SupabaseBackend.uploadPrivateFile({
-              ownerId: currentUser.id,
-              sectionId: item.sectionId,
-              file: item.file,
-              title: item.title,
-              description: item.description,
-              customFieldValues: item.customFieldValues,
-            })
-          )
-        );
+        const uploaded: PortfolioFile[] = [];
+        for (const item of preparedItems) {
+          const saved = await SupabaseBackend.uploadPrivateFile({
+            ownerId: currentUser.id,
+            sectionId: item.sectionId,
+            file: item.file,
+            title: item.title,
+            description: item.description,
+            customFieldValues: item.customFieldValues,
+          });
+          uploaded.push(saved);
+        }
+
         setFiles((prev) => [...uploaded, ...prev]);
         await recordActivity(
           'file_upload',
@@ -609,16 +656,29 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           uploaded[0]?.title
         );
         pushToast(
-          uploaded.length === 1 ? 'تم رفع الملف في التخزين الخاص' : `تم رفع ${uploaded.length} ملفات بنجاح`
+          splitPerformed
+            ? `تم تجهيز ورفع الملف الكبير كاملاً (${uploaded.length} أجزاء داخل عنصر واحد)`
+            : uploaded.length === 1
+              ? 'تم رفع الملف في التخزين الخاص'
+              : `تم رفع ${uploaded.length} ملفات بنجاح`
         );
       } catch (err) {
-        pushToast(err instanceof Error ? err.message : 'فشل رفع الملف', 'warning');
+        const rawMsg = err instanceof Error ? err.message : 'فشل رفع الملف';
+        const lower = rawMsg.toLowerCase();
+        if (lower.includes('maximum allowed size') || lower.includes('payload too large')) {
+          pushToast(
+            'تجاوز الملف حد التخزين الفردي (50 م.ب على الخطة المجانية). لملفات +100 صفحة كبيرة الحجم، احفظيها بصيغة PDF ليتم رفعها وتنظيمها تلقائياً داخل عنصر واحد.',
+            'warning'
+          );
+        } else {
+          pushToast(rawMsg, 'warning');
+        }
       }
       return;
     }
 
     const now = new Date().toISOString();
-    const created: PortfolioFile[] = items.map((item, idx) => ({
+    const created: PortfolioFile[] = preparedItems.map((item, idx) => ({
       id: `fil-${Date.now()}-${idx}`,
       title: item.title.trim() || item.file.name.replace(/\.[^/.]+$/, ''),
       originalFileName: item.file.name,
@@ -638,7 +698,13 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }));
     setFiles((prev) => [...created, ...prev]);
     await recordActivity('file_upload', `تم رفع ملف (${created[0]?.title ?? ''})`, created[0]?.title);
-    pushToast(created.length === 1 ? 'تم رفع الملف بنجاح' : `تم رفع ${created.length} ملفات بنجاح`);
+    pushToast(
+      splitPerformed
+        ? `تم تجهيز ورفع الملف الكبير كاملاً (${created.length} أجزاء داخل عنصر واحد)`
+        : created.length === 1
+          ? 'تم رفع الملف بنجاح'
+          : `تم رفع ${created.length} ملفات بنجاح`
+    );
   };
 
   const getSignedFileUrl = async (file: PortfolioFile): Promise<string | null> => {
@@ -930,6 +996,160 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setFiles((prev) => prev.filter((f) => f.id !== fileId));
     await recordActivity('file_delete', 'تم حذف الملف نهائياً', target.title);
     pushToast('تم حذف الملف نهائياً', 'warning');
+  };
+
+  const batchMoveFilesToSection = async (
+    fileIds: string[],
+    targetSectionId: string,
+    targetSubSectionId?: string
+  ) => {
+    if (fileIds.length === 0) return;
+    const idSet = new Set(fileIds);
+    const targetSec = visibleSections.find((s) => s.id === targetSectionId);
+    const subTitle = targetSubSectionId
+      ? targetSec?.customFields.find((cf) => cf.id === targetSubSectionId)?.label
+      : undefined;
+
+    const buildNextValues = (prevValues?: Record<string, string>) => {
+      const nextCustomValues: Record<string, string> = { ...(prevValues ?? {}) };
+      if (targetSubSectionId) {
+        nextCustomValues._subSectionId = targetSubSectionId;
+        if (subTitle) {
+          nextCustomValues._subSectionLabel = subTitle;
+        }
+      } else {
+        delete nextCustomValues._subSectionId;
+        delete nextCustomValues._subSectionLabel;
+      }
+      return nextCustomValues;
+    };
+
+    const targets = files.filter((f) => idSet.has(f.id) && !f.isDeleted);
+    if (targets.length === 0) return;
+
+    if (isSupabaseLive) {
+      try {
+        const updatedList = await Promise.all(
+          targets.map((f) =>
+            SupabaseBackend.updateFileMetadata(f.id, {
+              sectionId: targetSectionId,
+              customFieldValues: buildNextValues(f.customFieldValues),
+            })
+          )
+        );
+        const updatedMap = new Map(updatedList.map((u) => [u.id, u]));
+        setFiles((prev) => prev.map((f) => updatedMap.get(f.id) ?? f));
+        await recordActivity(
+          'file_update',
+          `تم نقل ${updatedList.length} ملفات إلى قسم: ${targetSec?.title ?? ''}`,
+          targetSec?.title
+        );
+        pushToast(
+          subTitle
+            ? `تم نقل ${updatedList.length} ملفات إلى "${targetSec?.title ?? ''} ← ${subTitle}"`
+            : `تم نقل ${updatedList.length} ملفات إلى "${targetSec?.title ?? ''}"`
+        );
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : 'تعذر نقل الملفات المحددة', 'warning');
+      }
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const targetIdSet = new Set(targets.map((t) => t.id));
+    setFiles((prev) =>
+      prev.map((f) =>
+        targetIdSet.has(f.id)
+          ? {
+              ...f,
+              sectionId: targetSectionId,
+              customFieldValues: buildNextValues(f.customFieldValues),
+              updatedAt: now,
+            }
+          : f
+      )
+    );
+    await recordActivity(
+      'file_update',
+      `تم نقل ${targets.length} ملفات إلى قسم: ${targetSec?.title ?? ''}`,
+      targetSec?.title
+    );
+    pushToast(
+      subTitle
+        ? `تم نقل ${targets.length} ملفات إلى "${targetSec?.title ?? ''} ← ${subTitle}"`
+        : `تم نقل ${targets.length} ملفات إلى "${targetSec?.title ?? ''}"`
+    );
+  };
+
+  const batchSoftDeleteFiles = async (fileIds: string[]) => {
+    if (fileIds.length === 0) return;
+    const idSet = new Set(fileIds);
+    const targets = files.filter((f) => idSet.has(f.id) && !f.isDeleted);
+    if (targets.length === 0) return;
+
+    if (isSupabaseLive) {
+      try {
+        await Promise.all(targets.map((f) => SupabaseBackend.softDeleteFile(f.id)));
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : 'تعذر حذف الملفات المحددة', 'warning');
+        return;
+      }
+    }
+
+    const now = new Date().toISOString();
+    const targetIdSet = new Set(targets.map((t) => t.id));
+    setFiles((prev) =>
+      prev.map((f) => (targetIdSet.has(f.id) ? { ...f, isDeleted: true, deletedAt: now } : f))
+    );
+    await recordActivity('file_delete', `تم نقل ${targets.length} ملفات إلى سلة المحذوفات`);
+    pushToast(`تم نقل ${targets.length} ملفات إلى سلة المحذوفات`, 'info');
+  };
+
+  const batchRestoreFiles = async (fileIds: string[]) => {
+    if (fileIds.length === 0) return;
+    const idSet = new Set(fileIds);
+    const targets = files.filter((f) => idSet.has(f.id) && f.isDeleted);
+    if (targets.length === 0) return;
+
+    if (isSupabaseLive) {
+      try {
+        await Promise.all(targets.map((f) => SupabaseBackend.restoreFile(f.id)));
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : 'تعذر استعادة الملفات المحددة', 'warning');
+        return;
+      }
+    }
+
+    const targetIdSet = new Set(targets.map((t) => t.id));
+    setFiles((prev) =>
+      prev.map((f) => (targetIdSet.has(f.id) ? { ...f, isDeleted: false, deletedAt: undefined } : f))
+    );
+    await recordActivity('file_restore', `تمت استعادة ${targets.length} ملفات من سلة المحذوفات`);
+    pushToast(`تمت استعادة ${targets.length} ملفات بنجاح`);
+  };
+
+  const batchPermanentlyDeleteFiles = async (fileIds: string[]) => {
+    if (fileIds.length === 0) return;
+    const idSet = new Set(fileIds);
+    const targets = files.filter((f) => idSet.has(f.id));
+    if (targets.length === 0) return;
+
+    if (isSupabaseLive) {
+      try {
+        await Promise.all(targets.map((f) => SupabaseBackend.permanentlyDeleteFile(f)));
+      } catch (err) {
+        pushToast(
+          err instanceof Error ? err.message : 'تعذر الحذف النهائي للملفات المحددة',
+          'warning'
+        );
+        return;
+      }
+    }
+
+    const targetIdSet = new Set(targets.map((t) => t.id));
+    setFiles((prev) => prev.filter((f) => !targetIdSet.has(f.id)));
+    await recordActivity('file_delete', `تم الحذف النهائي لـ ${targets.length} ملفات`);
+    pushToast(`تم الحذف النهائي لـ ${targets.length} ملفات`, 'warning');
   };
 
   const reviewFile = async (fileId: string, status: ReviewStatus, note: string) => {
@@ -2029,9 +2249,13 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         replaceFileBinary,
         appendFilesToEntry,
         moveFileToSection,
+        batchMoveFilesToSection,
         softDeleteFile,
+        batchSoftDeleteFiles,
         restoreFile,
+        batchRestoreFiles,
         permanentlyDeleteFile,
+        batchPermanentlyDeleteFiles,
         reviewFile,
         addAchievement,
         deleteAchievement,

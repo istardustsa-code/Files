@@ -17,6 +17,9 @@ import {
   PenLine,
   Ticket,
   X,
+  Check,
+  CheckSquare,
+  FolderInput,
 } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
 import { UploadFileModal } from '../../common/UploadFileModal';
@@ -57,6 +60,8 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     addAchievement,
     deleteAchievement,
     uploadFiles,
+    batchMoveFilesToSection,
+    batchSoftDeleteFiles,
     toggleManagerViewPermission,
     myVisitCode,
     myVisitLogs,
@@ -91,6 +96,18 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
 
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
+
+  // Multi-select state for sub-section modal & general files
+  const [subSelectMode, setSubSelectMode] = useState(false);
+  const [selectedSubFileIds, setSelectedSubFileIds] = useState<Set<string>>(new Set());
+  const [selectedSubNoteIds, setSelectedSubNoteIds] = useState<Set<string>>(new Set());
+  const [selectedGeneralIds, setSelectedGeneralIds] = useState<Set<string>>(new Set());
+
+  // Shared Batch Move Modal state
+  const [moveModalFileIds, setMoveModalFileIds] = useState<string[]>([]);
+  const [moveTargetSectionId, setMoveTargetSectionId] = useState<string>('');
+  const [moveTargetSubSectionId, setMoveTargetSubSectionId] = useState<string>('');
+  const [isMovingBatch, setIsMovingBatch] = useState(false);
 
   // Custom Main Section Modal
   const [customSectionModal, setCustomSectionModal] = useState(false);
@@ -142,6 +159,42 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     };
   }, [subImagePreviews]);
 
+  // Clean up stale selected IDs if files/notes are deleted or moved
+  useEffect(() => {
+    const activeIdSet = new Set(activeFiles.map((f) => f.id));
+    setSelectedSubFileIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (activeIdSet.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+    setSelectedGeneralIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (activeIdSet.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [activeFiles]);
+
+  useEffect(() => {
+    const noteIdSet = new Set(subSectionNotes.map((n) => n.id));
+    setSelectedSubNoteIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (noteIdSet.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [subSectionNotes]);
+
   const openSubSectionModal = (section: PortfolioSection, sub: CustomFieldDefinition) => {
     setActiveSubTarget({ sectionId: section.id, subSectionId: sub.id });
     setSubModalTab('files');
@@ -150,6 +203,9 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     setSubFileNote('');
     setNoteTitle('');
     setNoteContent('');
+    setSubSelectMode(false);
+    setSelectedSubFileIds(new Set());
+    setSelectedSubNoteIds(new Set());
   };
 
   const closeSubSectionModal = () => {
@@ -159,6 +215,42 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     setSubFileNote('');
     setNoteTitle('');
     setNoteContent('');
+    setSubSelectMode(false);
+    setSelectedSubFileIds(new Set());
+    setSelectedSubNoteIds(new Set());
+  };
+
+  const openBatchMoveModal = (
+    fileIds: string[],
+    currentSecId?: string,
+    currentSubId?: string
+  ) => {
+    if (fileIds.length === 0) return;
+    const defaultSec =
+      visibleSections.find((s) => s.id === currentSecId) ?? visibleSections[0];
+    const otherSub = defaultSec?.customFields.find((cf) => cf.id !== currentSubId);
+    setMoveModalFileIds(fileIds);
+    setMoveTargetSectionId(defaultSec?.id ?? '');
+    setMoveTargetSubSectionId(otherSub?.id ?? '');
+  };
+
+  const handleConfirmBatchMove = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (moveModalFileIds.length === 0 || !moveTargetSectionId) return;
+    setIsMovingBatch(true);
+    try {
+      await batchMoveFilesToSection(
+        moveModalFileIds,
+        moveTargetSectionId,
+        moveTargetSubSectionId || undefined
+      );
+      setMoveModalFileIds([]);
+      setSelectedSubFileIds(new Set());
+      setSelectedGeneralIds(new Set());
+      setSubSelectMode(false);
+    } finally {
+      setIsMovingBatch(false);
+    }
   };
 
   const openUploadFor = (secId?: string, subSecId?: string) => {
@@ -320,39 +412,65 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     setAchModal(false);
   };
 
-  const renderFileRow = (file: PortfolioFile) => (
-    <div
-      key={file.id}
-      className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-    >
-      <div className="flex items-center gap-3 min-w-0">
-        <FileTypeIconBox fileType={file.fileType} size="sm" />
-        <div className="min-w-0">
+  const toggleGeneralFile = (id: string) => {
+    setSelectedGeneralIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const renderFileRow = (file: PortfolioFile) => {
+    const isChecked = selectedGeneralIds.has(file.id);
+    return (
+      <div
+        key={file.id}
+        className={`py-2.5 px-2 -mx-2 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+          isChecked ? 'bg-[#A8B9A5]/15' : ''
+        }`}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={() => toggleGeneralFile(file.id)}
+            aria-label={`تحديد ${file.title}`}
+            className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+              isChecked
+                ? 'bg-[#556952] border-[#556952] text-white'
+                : 'bg-white border-[#D9C9B5] hover:border-[#556952]'
+            }`}
+          >
+            {isChecked && <Check size={12} strokeWidth={2.5} />}
+          </button>
+          <FileTypeIconBox fileType={file.fileType} size="sm" />
+          <div className="min-w-0">
+            <button
+              type="button"
+              onClick={() => setPreviewFile(file)}
+              className="text-sm font-medium text-[#454943] hover:text-[#556952] text-right truncate block"
+            >
+              {file.title}
+            </button>
+            <p className="text-xs text-[#666560] tabular-nums">
+              {formatBytesArabic(file.sizeBytes)} · {formatDateArabic(file.uploadedAt)}
+              {file.description ? ` · ${file.description}` : ''}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2.5 shrink-0">
+          <ReviewStatusInline status={file.reviewStatus} />
           <button
             type="button"
             onClick={() => setPreviewFile(file)}
-            className="text-sm font-medium text-[#454943] hover:text-[#556952] text-right truncate block"
+            className="px-3 py-1.5 text-xs font-medium bg-[#F7F5F0] border border-[#D9C9B5]/70 text-[#454943] rounded-lg hover:bg-[#D9C9B5]/40"
           >
-            {file.title}
+            عرض وإدارة
           </button>
-          <p className="text-xs text-[#666560] tabular-nums">
-            {formatBytesArabic(file.sizeBytes)} · {formatDateArabic(file.uploadedAt)}
-            {file.description ? ` · ${file.description}` : ''}
-          </p>
         </div>
       </div>
-      <div className="flex items-center gap-2.5 shrink-0">
-        <ReviewStatusInline status={file.reviewStatus} />
-        <button
-          type="button"
-          onClick={() => setPreviewFile(file)}
-          className="px-3 py-1.5 text-xs font-medium bg-[#F7F5F0] border border-[#D9C9B5]/70 text-[#454943] rounded-lg hover:bg-[#D9C9B5]/40"
-        >
-          عرض وإدارة
-        </button>
-      </div>
-    </div>
-  );
+    );
+  };
 
   // Achievements view
   if (focusMode === 'achievements') {
@@ -501,7 +619,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     : [];
 
   const groupedModalEntries = useMemo(() => {
-    const groups: { key: string; primary: PortfolioFile; count: number }[] = [];
+    const groups: { key: string; primary: PortfolioFile; fileIds: string[]; count: number }[] = [];
     const indexByBundle = new Map<string, number>();
 
     activeModalFiles.forEach((file) => {
@@ -510,11 +628,12 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
         const existingIdx = indexByBundle.get(bId);
         if (existingIdx !== undefined) {
           groups[existingIdx].count += 1;
+          groups[existingIdx].fileIds.push(file.id);
           return;
         }
         indexByBundle.set(bId, groups.length);
       }
-      groups.push({ key: bId || file.id, primary: file, count: 1 });
+      groups.push({ key: bId || file.id, primary: file, fileIds: [file.id], count: 1 });
     });
 
     return groups;
@@ -527,6 +646,8 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
           n.customFieldValues?._subSectionId === resolvedSubTarget.sub.id
       )
     : [];
+
+  const moveTargetSectionObj = visibleSections.find((s) => s.id === moveTargetSectionId);
 
   return (
     <div className="space-y-6">
@@ -766,20 +887,80 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
               )}
 
               {/* General / legacy files in the main section not attached to a sub-section */}
-              {generalFiles.length > 0 && (
-                <div className="bg-[#F7F5F0]/40 border border-[#D9C9B5]/60 rounded-xl p-3.5 space-y-1">
-                  <div className="flex items-center justify-between gap-2 pb-1">
-                    <h4 className="text-xs font-semibold text-[#666560]">
-                      {sec.customFields.length > 0
-                        ? `ملفات عامة في القسم الرئيسي (${generalFiles.length})`
-                        : `الملفات المرفوعة (${generalFiles.length})`}
-                    </h4>
+              {generalFiles.length > 0 && (() => {
+                const generalSelectedInSec = generalFiles
+                  .filter((f) => selectedGeneralIds.has(f.id))
+                  .map((f) => f.id);
+                const allGeneralSelectedInSec =
+                  generalFiles.length > 0 && generalSelectedInSec.length === generalFiles.length;
+
+                return (
+                  <div className="bg-[#F7F5F0]/40 border border-[#D9C9B5]/60 rounded-xl p-3.5 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+                      <h4 className="text-xs font-semibold text-[#666560]">
+                        {sec.customFields.length > 0
+                          ? `ملفات عامة في القسم الرئيسي (${generalFiles.length})`
+                          : `الملفات المرفوعة (${generalFiles.length})`}
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedGeneralIds((prev) => {
+                            const next = new Set(prev);
+                            if (allGeneralSelectedInSec) {
+                              generalFiles.forEach((f) => next.delete(f.id));
+                            } else {
+                              generalFiles.forEach((f) => next.add(f.id));
+                            }
+                            return next;
+                          });
+                        }}
+                        className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#556952] hover:underline"
+                      >
+                        <CheckSquare size={12} />
+                        <span>{allGeneralSelectedInSec ? 'إلغاء تحديد الكل' : 'تحديد الكل'}</span>
+                      </button>
+                    </div>
+
+                    {generalSelectedInSec.length > 0 && (
+                      <div className="bg-[#A8B9A5]/20 border border-[#556952]/30 rounded-lg px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-[#3F573C]">
+                          تم تحديد <span className="font-mono-num">{generalSelectedInSec.length}</span> ملف
+                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openBatchMoveModal(generalSelectedInSec, sec.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-white border border-[#D9C9B5] text-[#454943] rounded-md hover:border-[#556952]"
+                          >
+                            <FolderInput size={12} className="text-[#556952]" />
+                            <span>نقل لقسم آخر</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await batchSoftDeleteFiles(generalSelectedInSec);
+                              setSelectedGeneralIds((prev) => {
+                                const next = new Set(prev);
+                                generalSelectedInSec.forEach((id) => next.delete(id));
+                                return next;
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-[#D8BDB7]/40 text-[#7B4B43] rounded-md hover:bg-[#D8BDB7]/60"
+                          >
+                            <Trash2 size={12} />
+                            <span>حذف المحدد</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="divide-y divide-[#D9C9B5]/40">
+                      {generalFiles.map((file) => renderFileRow(file))}
+                    </div>
                   </div>
-                  <div className="divide-y divide-[#D9C9B5]/40">
-                    {generalFiles.map((file) => renderFileRow(file))}
-                  </div>
-                </div>
-              )}
+                );
+              })()}
             </section>
           );
         })}
@@ -826,55 +1007,218 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
             )}
 
             {/* Saved Items inside this sub-section: single clean title box per entry/bundle */}
-            {(groupedModalEntries.length > 0 || activeModalNotes.length > 0) && (
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-semibold text-[#454943]">
-                    العناصر المحفوظة ({groupedModalEntries.length + activeModalNotes.length})
-                  </h4>
-                  <span className="text-[11px] text-[#666560]">
-                    اضغطي على أي مربع لعرض كل المرفقات والصور والبيانات
-                  </span>
-                </div>
+            {(groupedModalEntries.length > 0 || activeModalNotes.length > 0) && (() => {
+              const allEntryFileIds = groupedModalEntries.flatMap((g) => g.fileIds);
+              const selectedFileIdList = Array.from(selectedSubFileIds);
+              const selectedNoteIdList = Array.from(selectedSubNoteIds);
+              const totalSelectedEntriesCount =
+                groupedModalEntries.filter((g) =>
+                  g.fileIds.some((id) => selectedSubFileIds.has(id))
+                ).length + selectedNoteIdList.length;
+              const allEntriesSelected =
+                groupedModalEntries.length + activeModalNotes.length > 0 &&
+                allEntryFileIds.every((id) => selectedSubFileIds.has(id)) &&
+                activeModalNotes.every((n) => selectedSubNoteIds.has(n.id));
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {groupedModalEntries.map(({ key, primary, count }) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => setPreviewFile(primary)}
-                      className="relative group bg-white border border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50 rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2 transition-all hover:shadow-xs"
-                    >
-                      {count > 1 && (
-                        <span className="absolute top-2 left-2 px-1.5 h-5 rounded-md bg-[#556952] text-white text-[10px] font-mono-num font-medium flex items-center justify-center">
-                          {count}
-                        </span>
+              return (
+                <div className="space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-semibold text-[#454943]">
+                        العناصر المحفوظة ({groupedModalEntries.length + activeModalNotes.length})
+                      </h4>
+                      <span className="text-[11px] text-[#666560]">
+                        {subSelectMode
+                          ? 'اضغطي على المربعات لتحديد أكثر من عنصر للحذف أو النقل'
+                          : 'اضغطي على أي مربع لعرض كل المرفقات والصور والبيانات'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {subSelectMode && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (allEntriesSelected) {
+                              setSelectedSubFileIds(new Set());
+                              setSelectedSubNoteIds(new Set());
+                            } else {
+                              setSelectedSubFileIds(new Set(allEntryFileIds));
+                              setSelectedSubNoteIds(new Set(activeModalNotes.map((n) => n.id)));
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-[#F7F5F0] border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-lg"
+                        >
+                          <span>{allEntriesSelected ? 'إلغاء الكل' : 'تحديد الكل'}</span>
+                        </button>
                       )}
-                      <FileTypeIconBox fileType={primary.fileType} size="sm" />
-                      <p className="text-xs sm:text-[13px] font-semibold text-[#454943] line-clamp-2 leading-snug w-full">
-                        {primary.title}
-                      </p>
-                    </button>
-                  ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSubSelectMode((prev) => {
+                            if (prev) {
+                              setSelectedSubFileIds(new Set());
+                              setSelectedSubNoteIds(new Set());
+                            }
+                            return !prev;
+                          });
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium border rounded-lg transition-colors ${
+                          subSelectMode
+                            ? 'bg-[#454943] border-[#454943] text-white'
+                            : 'bg-white border-[#D9C9B5] text-[#454943] hover:bg-[#F7F5F0]'
+                        }`}
+                      >
+                        <CheckSquare size={12} />
+                        <span>{subSelectMode ? 'إنهاء التحديد' : 'تحديد متعدد'}</span>
+                      </button>
+                    </div>
+                  </div>
 
-                  {activeModalNotes.map((n) => (
-                    <button
-                      key={n.id}
-                      type="button"
-                      onClick={() => setPreviewNote(n)}
-                      className="group bg-white border border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50 rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2 transition-all hover:shadow-xs"
-                    >
-                      <div className="w-10 h-10 rounded-xl bg-[#A8B9A5]/25 text-[#3F573C] flex items-center justify-center shrink-0">
-                        <PenLine size={17} />
+                  {subSelectMode && totalSelectedEntriesCount > 0 && (
+                    <div className="bg-[#A8B9A5]/20 border border-[#556952]/30 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-[#3F573C]">
+                        تم تحديد <span className="font-mono-num">{totalSelectedEntriesCount}</span> عنصر
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {selectedFileIdList.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openBatchMoveModal(
+                                selectedFileIdList,
+                                resolvedSubTarget.section.id,
+                                resolvedSubTarget.sub.id
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] rounded-lg hover:border-[#556952]"
+                          >
+                            <FolderInput size={13} className="text-[#556952]" />
+                            <span>نقل لقسم آخر ({selectedFileIdList.length})</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (selectedFileIdList.length > 0) {
+                              await batchSoftDeleteFiles(selectedFileIdList);
+                            }
+                            for (const noteId of selectedNoteIdList) {
+                              await deleteAchievement(noteId);
+                            }
+                            setSelectedSubFileIds(new Set());
+                            setSelectedSubNoteIds(new Set());
+                            setSubSelectMode(false);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[#D8BDB7]/40 text-[#7B4B43] rounded-lg hover:bg-[#D8BDB7]/60"
+                        >
+                          <Trash2 size={13} />
+                          <span>حذف المحدد</span>
+                        </button>
                       </div>
-                      <p className="text-xs sm:text-[13px] font-semibold text-[#454943] line-clamp-2 leading-snug w-full">
-                        {n.title}
-                      </p>
-                    </button>
-                  ))}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {groupedModalEntries.map(({ key, primary, fileIds, count }) => {
+                      const isSelected = fileIds.some((id) => selectedSubFileIds.has(id));
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => {
+                            if (subSelectMode) {
+                              setSelectedSubFileIds((prev) => {
+                                const next = new Set(prev);
+                                if (isSelected) {
+                                  fileIds.forEach((id) => next.delete(id));
+                                } else {
+                                  fileIds.forEach((id) => next.add(id));
+                                }
+                                return next;
+                              });
+                            } else {
+                              setPreviewFile(primary);
+                            }
+                          }}
+                          className={`relative group border rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2 transition-all hover:shadow-xs ${
+                            subSelectMode && isSelected
+                              ? 'bg-[#A8B9A5]/20 border-[#556952] ring-1 ring-[#556952]'
+                              : 'bg-white border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50'
+                          }`}
+                        >
+                          {subSelectMode && (
+                            <span
+                              className={`absolute top-2 right-2 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                                isSelected
+                                  ? 'bg-[#556952] border-[#556952] text-white'
+                                  : 'bg-white border-[#D9C9B5]'
+                              }`}
+                            >
+                              {isSelected && <Check size={11} strokeWidth={2.5} />}
+                            </span>
+                          )}
+                          {count > 1 && (
+                            <span className="absolute top-2 left-2 px-1.5 h-5 rounded-md bg-[#556952] text-white text-[10px] font-mono-num font-medium flex items-center justify-center">
+                              {count}
+                            </span>
+                          )}
+                          <FileTypeIconBox fileType={primary.fileType} size="sm" />
+                          <p className="text-xs sm:text-[13px] font-semibold text-[#454943] line-clamp-2 leading-snug w-full">
+                            {primary.title}
+                          </p>
+                        </button>
+                      );
+                    })}
+
+                    {activeModalNotes.map((n) => {
+                      const isNoteSelected = selectedSubNoteIds.has(n.id);
+                      return (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => {
+                            if (subSelectMode) {
+                              setSelectedSubNoteIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(n.id)) next.delete(n.id);
+                                else next.add(n.id);
+                                return next;
+                              });
+                            } else {
+                              setPreviewNote(n);
+                            }
+                          }}
+                          className={`relative group border rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2 transition-all hover:shadow-xs ${
+                            subSelectMode && isNoteSelected
+                              ? 'bg-[#A8B9A5]/20 border-[#556952] ring-1 ring-[#556952]'
+                              : 'bg-white border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50'
+                          }`}
+                        >
+                          {subSelectMode && (
+                            <span
+                              className={`absolute top-2 right-2 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                                isNoteSelected
+                                  ? 'bg-[#556952] border-[#556952] text-white'
+                                  : 'bg-white border-[#D9C9B5]'
+                              }`}
+                            >
+                              {isNoteSelected && <Check size={11} strokeWidth={2.5} />}
+                            </span>
+                          )}
+                          <div className="w-10 h-10 rounded-xl bg-[#A8B9A5]/25 text-[#3F573C] flex items-center justify-center shrink-0">
+                            <PenLine size={17} />
+                          </div>
+                          <p className="text-xs sm:text-[13px] font-semibold text-[#454943] line-clamp-2 leading-snug w-full">
+                            {n.title}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Add Action Tabs: Attach Files/Images OR Write Text Note */}
             <div className="border border-[#D9C9B5]/80 rounded-2xl p-4 space-y-4 bg-[#F7F5F0]/35">
@@ -962,7 +1306,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                       اسحبي عدة صور أو ملفات هنا، أو اختاري من الأزرار بالأسفل
                     </p>
                     <p className="text-[11px] text-[#666560] mt-1 tabular-nums">
-                      يمكنك إضافة أكثر من صورة وأكثر من مرفق معاً · حتى {settings.maxFileSizeMb} م.ب للملف
+                      يمكنك إضافة أكثر من صورة وأكثر من مرفق معاً أو ملفات كبيرة (+100 صفحة) · حتى {settings.maxFileSizeMb} م.ب للملف
                     </p>
                     <div
                       className="mt-3 flex flex-wrap items-center justify-center gap-2"
@@ -1279,6 +1623,74 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Batch Move Files Modal */}
+      <Modal
+        isOpen={moveModalFileIds.length > 0}
+        onClose={() => setMoveModalFileIds([])}
+        title="نقل الملفات المحددة إلى قسم آخر"
+        subtitle={`سيتم نقل (${moveModalFileIds.length}) ملف إلى القسم المختار`}
+      >
+        <form onSubmit={handleConfirmBatchMove} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-[#454943] mb-1.5">
+              القسم الأساسي الوجهة
+            </label>
+            <select
+              value={moveTargetSectionId}
+              onChange={(e) => {
+                setMoveTargetSectionId(e.target.value);
+                setMoveTargetSubSectionId('');
+              }}
+              required
+              className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943]"
+            >
+              {visibleSections.map((sec) => (
+                <option key={sec.id} value={sec.id}>
+                  {sec.title}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {moveTargetSectionObj && moveTargetSectionObj.customFields.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium text-[#454943] mb-1.5">
+                القسم الفرعي (اختياري)
+              </label>
+              <select
+                value={moveTargetSubSectionId}
+                onChange={(e) => setMoveTargetSubSectionId(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943]"
+              >
+                <option value="">عام داخل القسم الأساسي</option>
+                {moveTargetSectionObj.customFields.map((cf) => (
+                  <option key={cf.id} value={cf.id}>
+                    {cf.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#D9C9B5]/60">
+            <button
+              type="button"
+              onClick={() => setMoveModalFileIds([])}
+              className="px-4 py-2 text-xs sm:text-sm bg-[#F7F5F0] text-[#454943] rounded-lg"
+            >
+              إلغاء
+            </button>
+            <button
+              type="submit"
+              disabled={isMovingBatch || !moveTargetSectionId}
+              className="px-5 py-2 text-xs sm:text-sm font-medium bg-[#454943] text-white rounded-lg hover:bg-[#353833] disabled:opacity-60"
+            >
+              {isMovingBatch ? 'جاري النقل...' : `تأكيد النقل (${moveModalFileIds.length})`}
+            </button>
+          </div>
+        </form>
       </Modal>
 
       <VisitCodeModal isOpen={visitModalOpen} onClose={() => setVisitModalOpen(false)} />
