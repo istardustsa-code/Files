@@ -2,9 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { Search, Eye, Building2, Users } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
 import { Modal } from '../../common/Modal';
+import { FilePreviewModal } from '../../common/FilePreviewModal';
 import { FileTypeIconBox, ReviewStatusInline } from '../../common/FileTypeIndicator';
-import { formatDateArabic } from '../../../utils/formatters';
-import type { UserAccount } from '../../../types/platform';
+import { formatDateArabic, getSectionBreadcrumbLabel } from '../../../utils/formatters';
+import type { PortfolioFile, UserAccount } from '../../../types/platform';
 
 interface ManagerTeachersViewProps {
   mode: 'teachers' | 'schools';
@@ -23,6 +24,7 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
   const [search, setSearch] = useState('');
   const [schoolFilter, setSchoolFilter] = useState('all');
   const [inspectTeacher, setInspectTeacher] = useState<UserAccount | null>(null);
+  const [previewFile, setPreviewFile] = useState<PortfolioFile | null>(null);
 
   const filteredTeachers = useMemo(() => {
     return assignedTeachers
@@ -199,19 +201,34 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
           ) : (
             <div className="divide-y divide-[#D9C9B5]/50 border border-[#D9C9B5]/70 rounded-xl">
               {inspectFiles.map((f) => {
-                const secName = visibleSections.find((s) => s.id === f.sectionId)?.title ?? '';
+                const secName = getSectionBreadcrumbLabel(visibleSections, f);
                 return (
                   <div key={f.id} className="p-3.5 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <FileTypeIconBox fileType={f.fileType} size="sm" />
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-[#454943] truncate">{f.title}</p>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewFile(f)}
+                          className="text-sm font-medium text-[#454943] hover:text-[#556952] truncate block text-right"
+                        >
+                          {f.title}
+                        </button>
                         <p className="text-xs text-[#666560] tabular-nums">
                           {secName} · {formatDateArabic(f.uploadedAt)}
                         </p>
                       </div>
                     </div>
-                    <ReviewStatusInline status={f.reviewStatus} />
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      <ReviewStatusInline status={f.reviewStatus} />
+                      <button
+                        type="button"
+                        onClick={() => setPreviewFile(f)}
+                        className="px-2.5 py-1 text-xs font-medium bg-[#F7F5F0] text-[#454943] hover:bg-[#D9C9B5]/40 rounded-lg"
+                      >
+                        معاينة
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -219,6 +236,12 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
           )}
         </div>
       </Modal>
+
+      <FilePreviewModal
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        readOnly
+      />
     </div>
   );
 };

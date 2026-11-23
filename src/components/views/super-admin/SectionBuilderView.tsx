@@ -7,13 +7,12 @@ import {
   Trash2,
   Eye,
   EyeOff,
-  ListPlus,
+  FolderTree,
   X,
 } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
 import type {
   CustomFieldDefinition,
-  CustomFieldType,
   PortfolioSection,
 } from '../../../types/platform';
 import { Modal } from '../../common/Modal';
@@ -39,13 +38,12 @@ export const SectionBuilderView: React.FC = () => {
   const [accentColor, setAccentColor] = useState('#A8B9A5');
   const [isRequired, setIsRequired] = useState(false);
   const [isActive, setIsActive] = useState(true);
-  const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([]);
+  const [subSections, setSubSections] = useState<CustomFieldDefinition[]>([]);
 
-  // New custom field draft
-  const [newFieldLabel, setNewFieldLabel] = useState('');
-  const [newFieldType, setNewFieldType] = useState<CustomFieldType>('text');
-  const [newFieldRequired, setNewFieldRequired] = useState(false);
-  const [newFieldOptions, setNewFieldOptions] = useState('');
+  // New sub-section draft
+  const [newSubTitle, setNewSubTitle] = useState('');
+  const [newSubDesc, setNewSubDesc] = useState('');
+  const [newSubRequired, setNewSubRequired] = useState(false);
 
   const openNewModal = () => {
     setEditing(null);
@@ -55,7 +53,10 @@ export const SectionBuilderView: React.FC = () => {
     setAccentColor('#A8B9A5');
     setIsRequired(false);
     setIsActive(true);
-    setCustomFields([]);
+    setSubSections([]);
+    setNewSubTitle('');
+    setNewSubDesc('');
+    setNewSubRequired(false);
     setModalOpen(true);
   };
 
@@ -67,29 +68,38 @@ export const SectionBuilderView: React.FC = () => {
     setAccentColor(sec.accentColor);
     setIsRequired(sec.isRequired);
     setIsActive(sec.isActive);
-    setCustomFields(sec.customFields);
+    setSubSections(sec.customFields);
+    setNewSubTitle('');
+    setNewSubDesc('');
+    setNewSubRequired(false);
     setModalOpen(true);
   };
 
-  const handleAddCustomField = () => {
-    if (!newFieldLabel.trim()) return;
-    const field: CustomFieldDefinition = {
-      id: `cf-${Date.now()}`,
-      label: newFieldLabel.trim(),
-      type: newFieldType,
-      required: newFieldRequired,
-      options:
-        newFieldType === 'select'
-          ? newFieldOptions
-              .split('،')
-              .map((s) => s.trim())
-              .filter(Boolean)
-          : undefined,
+  const handleAddSubSection = () => {
+    if (!newSubTitle.trim()) return;
+    const sub: CustomFieldDefinition = {
+      id: `sub-${Date.now()}`,
+      label: newSubTitle.trim(),
+      type: 'subsection',
+      required: newSubRequired,
+      placeholder: newSubDesc.trim() || undefined,
     };
-    setCustomFields((prev) => [...prev, field]);
-    setNewFieldLabel('');
-    setNewFieldOptions('');
-    setNewFieldRequired(false);
+    setSubSections((prev) => [...prev, sub]);
+    setNewSubTitle('');
+    setNewSubDesc('');
+    setNewSubRequired(false);
+  };
+
+  const moveSubSection = (index: number, direction: 'up' | 'down') => {
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= subSections.length) return;
+    setSubSections((prev) => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[swapIndex];
+      next[swapIndex] = temp;
+      return next;
+    });
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -104,7 +114,7 @@ export const SectionBuilderView: React.FC = () => {
         accentColor,
         isRequired,
         isActive,
-        customFields,
+        customFields: subSections,
       });
     } else {
       createSection({
@@ -116,27 +126,10 @@ export const SectionBuilderView: React.FC = () => {
         isRequired,
         isSystemDefault: false,
         category,
-        customFields,
+        customFields: subSections,
       });
     }
     setModalOpen(false);
-  };
-
-  const fieldTypeLabel = (t: CustomFieldType) => {
-    switch (t) {
-      case 'text':
-        return 'نص قصير';
-      case 'textarea':
-        return 'نص طويل';
-      case 'date':
-        return 'تاريخ';
-      case 'number':
-        return 'رقم';
-      case 'select':
-        return 'قائمة خيارات';
-      case 'attachment':
-        return 'مرفق إضافي';
-    }
   };
 
   return (
@@ -144,10 +137,10 @@ export const SectionBuilderView: React.FC = () => {
       <div className="bg-white border border-[#D9C9B5]/70 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-base font-semibold text-[#454943]">
-            إدارة الأقسام وبناء الحقول الديناميكية
+            إدارة الأقسام الرئيسية والأقسام الفرعية
           </h2>
           <p className="text-xs text-[#666560] mt-0.5">
-            أنشئ، عدّل، أعد ترتيب، أو خصّص حقول الإدخال والمرفقات لكل قسم في ملف الإنجاز بشكل ديناميكي بالكامل
+            كل قسم فرعي داخل القسم الأساسي يظهر كمساحة مستقلة يمكن للمعلمين رفع الملفات والصور والمرفقات والشواهد بداخلها
           </p>
         </div>
 
@@ -157,7 +150,7 @@ export const SectionBuilderView: React.FC = () => {
           className="inline-flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-medium bg-[#454943] text-white hover:bg-[#353833] rounded-xl transition-colors whitespace-nowrap"
         >
           <Plus size={16} />
-          <span>إضافة قسم جديد</span>
+          <span>إضافة قسم أساسي جديد</span>
         </button>
       </div>
 
@@ -197,7 +190,7 @@ export const SectionBuilderView: React.FC = () => {
                 </button>
               </div>
 
-              <div className="min-w-0 space-y-1">
+              <div className="min-w-0 space-y-1.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className="w-2.5 h-2.5 rounded-full shrink-0"
@@ -215,11 +208,13 @@ export const SectionBuilderView: React.FC = () => {
 
                 <p className="text-sm text-[#666560] leading-relaxed">{sec.description}</p>
 
-                <p className="text-xs text-[#85847E] tabular-nums">
-                  الحقول المخصصة ({sec.customFields.length}):{' '}
-                  {sec.customFields.length > 0
-                    ? sec.customFields.map((f) => f.label).join('، ')
-                    : 'لا توجد حقول إضافية'}
+                <p className="text-xs text-[#556952] tabular-nums">
+                  الأقسام الفرعية المنفصلة ({sec.customFields.length}):{' '}
+                  <span className="text-[#666560]">
+                    {sec.customFields.length > 0
+                      ? sec.customFields.map((f) => f.label).join(' · ')
+                      : 'لا توجد أقسام فرعية (يُرفع داخل القسم الرئيسي مباشرة)'}
+                  </span>
                 </p>
               </div>
             </div>
@@ -239,7 +234,7 @@ export const SectionBuilderView: React.FC = () => {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[#F7F5F0] text-[#454943] hover:bg-[#D9C9B5]/40 rounded-lg whitespace-nowrap"
               >
                 <Edit3 size={14} />
-                <span>تعديل والحقول</span>
+                <span>تعديل والأقسام الفرعية</span>
               </button>
               <button
                 type="button"
@@ -255,18 +250,18 @@ export const SectionBuilderView: React.FC = () => {
         ))}
       </div>
 
-      {/* Section & Custom Field Builder Modal */}
+      {/* Section & Sub-sections Builder Modal */}
       <Modal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editing ? `تعديل قسم: ${editing.title}` : 'إنشاء قسم ديناميكي جديد'}
-        subtitle="يمكنك تعريف الحقول المخصصة والمرفقات المطلوبة داخل هذا القسم"
+        title={editing ? `تعديل قسم: ${editing.title}` : 'إنشاء قسم أساسي جديد'}
+        subtitle="أضيفي أقسامًا فرعية منفصلة داخل هذا القسم ليتمكن المعلمون من رفع الملفات والصور والمرفقات داخل كل منها"
         maxWidthClass="max-w-2xl"
       >
         <form onSubmit={handleSave} className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-[#454943] mb-1">اسم القسم</label>
+              <label className="block text-xs font-medium text-[#454943] mb-1">اسم القسم الأساسي</label>
               <input
                 type="text"
                 value={title}
@@ -299,7 +294,7 @@ export const SectionBuilderView: React.FC = () => {
               rows={2}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="وضح للمعلمين الغرض من هذا القسم ونوعية الشواهد المطلوبة..."
+              placeholder="وضح للمعلمين الغرض من هذا القسم ونوعية الشواهد والملفات المطلوبة..."
               className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl"
             />
           </div>
@@ -338,89 +333,107 @@ export const SectionBuilderView: React.FC = () => {
             </div>
           </div>
 
-          {/* Dynamic Custom Fields Builder */}
+          {/* Nested Sub-sections Builder */}
           <div className="pt-4 border-t border-[#D9C9B5]/60 space-y-3">
-            <div className="flex items-center gap-2">
-              <ListPlus size={16} className="text-[#556952]" />
-              <h4 className="text-sm font-semibold text-[#454943]">الحقول المخصصة للقسم</h4>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <FolderTree size={16} className="text-[#556952]" />
+                <h4 className="text-sm font-semibold text-[#454943]">
+                  الأقسام الفرعية المنفصلة داخل القسم
+                </h4>
+              </div>
+              <span className="text-[11px] text-[#666560]">
+                يدعم كل قسم فرعي رفع ملفات وصور ومرفقات وملاحظات
+              </span>
             </div>
 
-            {customFields.length > 0 && (
+            {subSections.length > 0 && (
               <div className="divide-y divide-[#D9C9B5]/40 border border-[#D9C9B5]/70 rounded-xl bg-[#F7F5F0]/50">
-                {customFields.map((field) => (
+                {subSections.map((sub, index) => (
                   <div
-                    key={field.id}
+                    key={sub.id}
                     className="flex items-center justify-between gap-3 px-3.5 py-2.5 text-xs"
                   >
-                    <div>
-                      <span className="font-semibold text-[#454943]">{field.label}</span>
-                      <span className="text-[#666560] mr-2">
-                        · {fieldTypeLabel(field.type)} {field.required ? '· مطلوب' : '· اختياري'}
-                      </span>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-[#454943]">
+                        {sub.label}
+                        <span className="font-normal text-[#556952] mr-2">
+                          {sub.required ? '· مطلوب' : '· اختياري'}
+                        </span>
+                      </p>
+                      {sub.placeholder && (
+                        <p className="text-[#666560] truncate mt-0.5">{sub.placeholder}</p>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCustomFields((prev) => prev.filter((f) => f.id !== field.id))
-                      }
-                      className="text-[#85847E] hover:text-[#8A5E56]"
-                      aria-label="حذف الحقل"
-                    >
-                      <X size={15} />
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        disabled={index === 0}
+                        onClick={() => moveSubSection(index, 'up')}
+                        className="p-1 text-[#85847E] hover:text-[#454943] disabled:opacity-30"
+                        aria-label="تحريك القسم الفرعي للأعلى"
+                      >
+                        <ArrowUp size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={index === subSections.length - 1}
+                        onClick={() => moveSubSection(index, 'down')}
+                        className="p-1 text-[#85847E] hover:text-[#454943] disabled:opacity-30"
+                        aria-label="تحريك القسم الفرعي للأسفل"
+                      >
+                        <ArrowDown size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSubSections((prev) => prev.filter((f) => f.id !== sub.id))
+                        }
+                        className="p-1 text-[#85847E] hover:text-[#8A5E56]"
+                        aria-label="حذف القسم الفرعي"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
             )}
 
-            <div className="p-3.5 rounded-xl bg-[#F7F5F0] border border-[#D9C9B5]/60 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="p-3.5 rounded-xl bg-[#F7F5F0] border border-[#D9C9B5]/60 space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <input
                   type="text"
-                  value={newFieldLabel}
-                  onChange={(e) => setNewFieldLabel(e.target.value)}
-                  placeholder="اسم الحقل الجديد (مثال: الجهة المنفذة)"
+                  value={newSubTitle}
+                  onChange={(e) => setNewSubTitle(e.target.value)}
+                  placeholder="اسم القسم الفرعي (مثال: صور تنفيذ المبادرة)"
                   className="px-3 py-2 text-xs bg-white border border-[#D9C9B5] rounded-lg"
                 />
-                <select
-                  value={newFieldType}
-                  onChange={(e) => setNewFieldType(e.target.value as CustomFieldType)}
+                <input
+                  type="text"
+                  value={newSubDesc}
+                  onChange={(e) => setNewSubDesc(e.target.value)}
+                  placeholder="توضيح أو وصف مختصر للمعلم (اختياري)"
                   className="px-3 py-2 text-xs bg-white border border-[#D9C9B5] rounded-lg"
-                >
-                  <option value="text">نص قصير</option>
-                  <option value="textarea">نص طويل</option>
-                  <option value="number">رقم</option>
-                  <option value="date">تاريخ</option>
-                  <option value="select">قائمة خيارات</option>
-                  <option value="attachment">مرفق إضافي</option>
-                </select>
-                <div className="flex items-center justify-between gap-2">
-                  <label className="flex items-center gap-1.5 text-xs text-[#454943]">
-                    <input
-                      type="checkbox"
-                      checked={newFieldRequired}
-                      onChange={(e) => setNewFieldRequired(e.target.checked)}
-                    />
-                    <span>إلزامي</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleAddCustomField}
-                    className="px-3 py-1.5 text-xs font-medium bg-[#556952] text-white rounded-lg hover:bg-[#465743] whitespace-nowrap"
-                  >
-                    + إدراج حقل
-                  </button>
-                </div>
+                />
               </div>
-              {newFieldType === 'select' && (
-                <input
-                  type="text"
-                  value={newFieldOptions}
-                  onChange={(e) => setNewFieldOptions(e.target.value)}
-                  placeholder="اكتب الخيارات مفصولة بفاصلة عربية (مثال: مدرسة، مكتب تعليم، إدارة تعليم)"
-                  className="w-full px-3 py-2 text-xs bg-white border border-[#D9C9B5] rounded-lg"
-                />
-              )}
+              <div className="flex items-center justify-between gap-2">
+                <label className="flex items-center gap-1.5 text-xs text-[#454943] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newSubRequired}
+                    onChange={(e) => setNewSubRequired(e.target.checked)}
+                  />
+                  <span>قسم فرعي أساسي / مطلوب</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAddSubSection}
+                  className="px-3.5 py-1.5 text-xs font-medium bg-[#556952] text-white rounded-lg hover:bg-[#465743] whitespace-nowrap"
+                >
+                  + إضافة قسم فرعي
+                </button>
+              </div>
             </div>
           </div>
 

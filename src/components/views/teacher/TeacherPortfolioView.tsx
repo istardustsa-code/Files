@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Upload, Award, FolderOpen, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Plus, Upload, Award, FolderOpen, Trash2, Eye, EyeOff, FolderTree } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
 import { UploadFileModal } from '../../common/UploadFileModal';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
@@ -7,7 +7,11 @@ import { FileTypeIconBox, ReviewStatusInline } from '../../common/FileTypeIndica
 import { Modal } from '../../common/Modal';
 import { EmptyState } from '../../common/EmptyState';
 import type { AchievementItem, PortfolioFile } from '../../../types/platform';
-import { formatBytesArabic, formatDateArabic } from '../../../utils/formatters';
+import {
+  formatBytesArabic,
+  formatDateArabic,
+  getFileSubSectionId,
+} from '../../../utils/formatters';
 
 interface TeacherPortfolioViewProps {
   focusMode: 'all' | 'achievements' | 'certificates' | 'evidence' | 'custom_sections';
@@ -29,6 +33,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
   const allowManagerView = currentUser.allowManagerView !== false;
 
   const [uploadSectionId, setUploadSectionId] = useState<string | undefined>(undefined);
+  const [uploadSubSectionId, setUploadSubSectionId] = useState<string | undefined>(undefined);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<PortfolioFile | null>(null);
 
@@ -44,10 +49,45 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
 
   const activeFiles = visibleFiles.filter((f) => !f.isDeleted);
 
-  const openUploadFor = (secId?: string) => {
+  const openUploadFor = (secId?: string, subSecId?: string) => {
     setUploadSectionId(secId);
+    setUploadSubSectionId(subSecId);
     setUploadOpen(true);
   };
+
+  const renderFileRow = (file: PortfolioFile) => (
+    <div
+      key={file.id}
+      className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <FileTypeIconBox fileType={file.fileType} size="sm" />
+        <div className="min-w-0">
+          <button
+            type="button"
+            onClick={() => setPreviewFile(file)}
+            className="text-sm font-medium text-[#454943] hover:text-[#556952] text-right truncate block"
+          >
+            {file.title}
+          </button>
+          <p className="text-xs text-[#666560] tabular-nums">
+            {formatBytesArabic(file.sizeBytes)} · {formatDateArabic(file.uploadedAt)}
+            {file.description ? ` · ${file.description}` : ''}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3 shrink-0">
+        <ReviewStatusInline status={file.reviewStatus} />
+        <button
+          type="button"
+          onClick={() => setPreviewFile(file)}
+          className="px-3 py-1.5 text-xs font-medium bg-white border border-[#D9C9B5]/70 text-[#454943] rounded-lg hover:bg-[#D9C9B5]/30"
+        >
+          عرض وإدارة
+        </button>
+      </div>
+    </div>
+  );
 
   const handleCreateCustomSection = (e: React.FormEvent) => {
     e.preventDefault();
@@ -286,10 +326,16 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
         </button>
       </div>
 
-      {/* Sections & their files */}
+      {/* Sections & their nested sub-sections and files */}
       <div className="space-y-5">
         {displayedSections.map((sec) => {
           const secFiles = activeFiles.filter((f) => f.sectionId === sec.id);
+          const subSectionIds = new Set(sec.customFields.map((cf) => cf.id));
+          const generalFiles = secFiles.filter((f) => {
+            const subId = getFileSubSectionId(f);
+            return !subId || !subSectionIds.has(subId);
+          });
+
           return (
             <section
               key={sec.id}
@@ -297,7 +343,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
             >
               <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#D9C9B5]/50">
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span
                       className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: sec.accentColor }}
@@ -309,13 +355,18 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                     {sec.ownerId && (
                       <span className="text-xs text-[#666560]">· قسم شخصي</span>
                     )}
+                    {sec.customFields.length > 0 && (
+                      <span className="text-xs text-[#666560]">
+                        · {sec.customFields.length} أقسام فرعية
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-[#666560]">{sec.description}</p>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => openUploadFor(sec.id)}
+                  onClick={() => openUploadFor(sec.id, undefined)}
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium bg-[#F7F5F0] text-[#454943] hover:bg-[#D9C9B5]/40 rounded-lg whitespace-nowrap"
                 >
                   <Upload size={14} />
@@ -323,7 +374,92 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                 </button>
               </div>
 
-              {secFiles.length === 0 ? (
+              {sec.customFields.length > 0 ? (
+                <div className="space-y-3.5">
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {sec.customFields.map((sub) => {
+                      const subFiles = secFiles.filter((f) => getFileSubSectionId(f) === sub.id);
+                      return (
+                        <div
+                          key={sub.id}
+                          className="bg-[#F7F5F0]/55 border border-[#D9C9B5]/80 rounded-xl p-4 space-y-3"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="space-y-0.5 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <FolderTree size={14} className="text-[#556952] shrink-0" />
+                                <h4 className="text-sm font-semibold text-[#454943]">
+                                  {sub.label}
+                                </h4>
+                                {sub.required && (
+                                  <span className="text-[11px] font-medium text-[#556952]">
+                                    · مطلوب
+                                  </span>
+                                )}
+                                <span className="text-xs text-[#666560] tabular-nums">
+                                  ({subFiles.length} مرفقات)
+                                </span>
+                              </div>
+                              {sub.placeholder && (
+                                <p className="text-xs text-[#666560] pr-5">{sub.placeholder}</p>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => openUploadFor(sec.id, sub.id)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] hover:bg-[#D9C9B5]/30 rounded-lg whitespace-nowrap shrink-0"
+                            >
+                              <Upload size={13} />
+                              <span>إضافة ملف / صورة / مرفق</span>
+                            </button>
+                          </div>
+
+                          {subFiles.length === 0 ? (
+                            <div className="pt-2 border-t border-[#D9C9B5]/40 flex flex-wrap items-center justify-between gap-2 text-xs text-[#666560]">
+                              <span className="flex items-center gap-2">
+                                <FolderOpen size={14} className="text-[#85847E]" />
+                                <span>لا توجد ملفات أو صور مرفوعة في هذا القسم الفرعي بعد.</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => openUploadFor(sec.id, sub.id)}
+                                className="text-[#556952] font-medium hover:underline"
+                              >
+                                رفع ملف أو صورة
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="divide-y divide-[#D9C9B5]/45 border-t border-[#D9C9B5]/45 pt-1">
+                              {subFiles.map((file) => renderFileRow(file))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {generalFiles.length > 0 && (
+                    <div className="bg-white border border-[#D9C9B5]/70 rounded-xl p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-2 pb-1">
+                        <h4 className="text-xs font-semibold text-[#666560]">
+                          ملفات ومرفقات عامة في القسم ({generalFiles.length})
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => openUploadFor(sec.id, undefined)}
+                          className="text-xs text-[#556952] font-medium hover:underline"
+                        >
+                          إضافة ملف عام
+                        </button>
+                      </div>
+                      <div className="divide-y divide-[#D9C9B5]/40">
+                        {generalFiles.map((file) => renderFileRow(file))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : secFiles.length === 0 ? (
                 <div className="py-4 flex items-center justify-between text-xs text-[#666560]">
                   <span className="flex items-center gap-2">
                     <FolderOpen size={15} className="text-[#85847E]" />
@@ -331,7 +467,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                   </span>
                   <button
                     type="button"
-                    onClick={() => openUploadFor(sec.id)}
+                    onClick={() => openUploadFor(sec.id, undefined)}
                     className="text-[#556952] font-medium hover:underline"
                   >
                     رفع أول ملف
@@ -339,38 +475,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                 </div>
               ) : (
                 <div className="divide-y divide-[#D9C9B5]/40">
-                  {secFiles.map((file) => (
-                    <div
-                      key={file.id}
-                      className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <FileTypeIconBox fileType={file.fileType} size="sm" />
-                        <div className="min-w-0">
-                          <button
-                            type="button"
-                            onClick={() => setPreviewFile(file)}
-                            className="text-sm font-medium text-[#454943] hover:text-[#556952] text-right truncate block"
-                          >
-                            {file.title}
-                          </button>
-                          <p className="text-xs text-[#666560] tabular-nums">
-                            {formatBytesArabic(file.sizeBytes)} · {formatDateArabic(file.uploadedAt)}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <ReviewStatusInline status={file.reviewStatus} />
-                        <button
-                          type="button"
-                          onClick={() => setPreviewFile(file)}
-                          className="px-3 py-1.5 text-xs font-medium bg-[#F7F5F0] text-[#454943] rounded-lg hover:bg-[#D9C9B5]/40"
-                        >
-                          عرض
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                  {secFiles.map((file) => renderFileRow(file))}
                 </div>
               )}
             </section>
@@ -428,6 +533,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
         isOpen={uploadOpen}
         onClose={() => setUploadOpen(false)}
         defaultSectionId={uploadSectionId}
+        defaultSubSectionId={uploadSubSectionId}
       />
       <FilePreviewModal
         file={visibleFiles.find((f) => f.id === previewFile?.id) ?? null}

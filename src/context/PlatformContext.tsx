@@ -102,7 +102,11 @@ interface PlatformContextValue {
     updates: { title: string; description: string; customFieldValues?: Record<string, string> }
   ) => Promise<void>;
   replaceFileBinary: (fileId: string, newFile: File) => Promise<void>;
-  moveFileToSection: (fileId: string, targetSectionId: string) => Promise<void>;
+  moveFileToSection: (
+    fileId: string,
+    targetSectionId: string,
+    targetSubSectionId?: string
+  ) => Promise<void>;
   softDeleteFile: (fileId: string) => Promise<void>;
   restoreFile: (fileId: string) => Promise<void>;
   permanentlyDeleteFile: (fileId: string) => Promise<void>;
@@ -660,15 +664,35 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     pushToast('تم استبدال الملف بنجاح');
   };
 
-  const moveFileToSection = async (fileId: string, targetSectionId: string) => {
+  const moveFileToSection = async (
+    fileId: string,
+    targetSectionId: string,
+    targetSubSectionId?: string
+  ) => {
+    const existing = files.find((f) => f.id === fileId);
     const targetSec = sections.find((s) => s.id === targetSectionId);
+    const nextCustomValues: Record<string, string> = { ...(existing?.customFieldValues ?? {}) };
+    if (targetSubSectionId) {
+      nextCustomValues._subSectionId = targetSubSectionId;
+    } else {
+      delete nextCustomValues._subSectionId;
+    }
+
     if (isSupabaseLive) {
       try {
         const updated = await SupabaseBackend.updateFileMetadata(fileId, {
           sectionId: targetSectionId,
+          customFieldValues: nextCustomValues,
         });
         setFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
-        pushToast(`تم نقل الملف إلى "${targetSec?.title ?? ''}"`);
+        const subTitle = targetSubSectionId
+          ? targetSec?.customFields.find((cf) => cf.id === targetSubSectionId)?.label
+          : undefined;
+        pushToast(
+          subTitle
+            ? `تم نقل الملف إلى "${targetSec?.title ?? ''} ← ${subTitle}"`
+            : `تم نقل الملف إلى "${targetSec?.title ?? ''}"`
+        );
       } catch (err) {
         pushToast(err instanceof Error ? err.message : 'تعذر نقل الملف', 'warning');
       }
@@ -678,11 +702,23 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setFiles((prev) =>
       prev.map((f) =>
         f.id === fileId
-          ? { ...f, sectionId: targetSectionId, updatedAt: new Date().toISOString() }
+          ? {
+              ...f,
+              sectionId: targetSectionId,
+              customFieldValues: nextCustomValues,
+              updatedAt: new Date().toISOString(),
+            }
           : f
       )
     );
-    pushToast(`تم نقل الملف إلى "${targetSec?.title ?? 'القسم المحدد'}"`);
+    const subTitle = targetSubSectionId
+      ? targetSec?.customFields.find((cf) => cf.id === targetSubSectionId)?.label
+      : undefined;
+    pushToast(
+      subTitle
+        ? `تم نقل الملف إلى "${targetSec?.title ?? 'القسم المحدد'} ← ${subTitle}"`
+        : `تم نقل الملف إلى "${targetSec?.title ?? 'القسم المحدد'}"`
+    );
   };
 
   const softDeleteFile = async (fileId: string) => {

@@ -1,4 +1,10 @@
-import type { FileTypeCategory, ReviewStatus, UserRole } from '../types/platform';
+import type {
+  FileTypeCategory,
+  PortfolioFile,
+  PortfolioSection,
+  ReviewStatus,
+  UserRole,
+} from '../types/platform';
 
 export function formatBytesArabic(bytes: number): string {
   if (bytes < 1024) return `${bytes} بايت`;
@@ -124,4 +130,29 @@ export function exportCsvArabic(filename: string, headers: string[], rows: (stri
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+export function getFileSubSectionId(file: PortfolioFile): string | undefined {
+  const val = file.customFieldValues?._subSectionId;
+  return typeof val === 'string' && val.trim() ? val.trim() : undefined;
+}
+
+export function getSubSectionTitle(
+  sections: PortfolioSection[],
+  file: PortfolioFile
+): string | undefined {
+  const subId = getFileSubSectionId(file);
+  if (!subId) return undefined;
+  const sec = sections.find((s) => s.id === file.sectionId);
+  return sec?.customFields.find((cf) => cf.id === subId)?.label;
+}
+
+export function getSectionBreadcrumbLabel(
+  sections: PortfolioSection[],
+  file: PortfolioFile
+): string {
+  const sec = sections.find((s) => s.id === file.sectionId);
+  if (!sec) return 'قسم عام';
+  const subTitle = getSubSectionTitle(sections, file);
+  return subTitle ? `${sec.title} ← ${subTitle}` : sec.title;
 }

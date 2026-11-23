@@ -17,7 +17,11 @@ import { UploadFileModal } from '../../common/UploadFileModal';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { EmptyState } from '../../common/EmptyState';
-import { formatBytesArabic, formatDateArabic } from '../../../utils/formatters';
+import {
+  formatBytesArabic,
+  formatDateArabic,
+  getSectionBreadcrumbLabel,
+} from '../../../utils/formatters';
 
 interface FileManagementViewProps {
   initialSectionFilter?: string;
@@ -57,20 +61,22 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
       .filter((f) => {
         if (!effectiveSearch) return true;
         const ownerName = users.find((u) => u.id === f.ownerId)?.fullName ?? '';
+        const sectionLabel = getSectionBreadcrumbLabel(visibleSections, f);
         return (
           f.title.toLowerCase().includes(effectiveSearch) ||
           f.originalFileName.toLowerCase().includes(effectiveSearch) ||
           f.description.toLowerCase().includes(effectiveSearch) ||
-          ownerName.toLowerCase().includes(effectiveSearch)
+          ownerName.toLowerCase().includes(effectiveSearch) ||
+          sectionLabel.toLowerCase().includes(effectiveSearch)
         );
       });
-  }, [visibleFiles, tab, sectionFilter, typeFilter, effectiveSearch, users]);
+  }, [visibleFiles, visibleSections, tab, sectionFilter, typeFilter, effectiveSearch, users]);
 
   const activeCount = visibleFiles.filter((f) => !f.isDeleted).length;
   const trashCount = visibleFiles.filter((f) => f.isDeleted).length;
 
-  const getSectionTitle = (secId: string) =>
-    visibleSections.find((s) => s.id === secId)?.title ?? 'قسم عام';
+  const getSectionLabel = (file: PortfolioFile) =>
+    getSectionBreadcrumbLabel(visibleSections, file);
   const getOwnerName = (ownerId: string) =>
     users.find((u) => u.id === ownerId)?.fullName ?? '—';
 
@@ -239,7 +245,7 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
                       </div>
                     </td>
                     <td className="py-3 px-4 text-xs text-[#454943] whitespace-nowrap">
-                      {getSectionTitle(file.sectionId)}
+                      {getSectionLabel(file)}
                     </td>
                     {currentRole === 'super_admin' && (
                       <td className="py-3 px-4 text-xs text-[#666560] whitespace-nowrap">
@@ -337,7 +343,7 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#666560] tabular-nums">
-                  <span>{getSectionTitle(file.sectionId)}</span>
+                  <span>{getSectionLabel(file)}</span>
                   <span aria-hidden="true">·</span>
                   <FileTypeInlineText fileType={file.fileType} />
                   <span aria-hidden="true">·</span>

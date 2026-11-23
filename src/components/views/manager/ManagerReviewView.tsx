@@ -5,7 +5,7 @@ import type { PortfolioFile, ReviewStatus } from '../../../types/platform';
 import { FileTypeIconBox, ReviewStatusInline } from '../../common/FileTypeIndicator';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
 import { Modal } from '../../common/Modal';
-import { formatDateArabic } from '../../../utils/formatters';
+import { formatDateArabic, getSectionBreadcrumbLabel } from '../../../utils/formatters';
 
 export const ManagerReviewView: React.FC = () => {
   const { visibleFiles, visibleSections, assignedTeachers, reviewFile } = usePlatform();
@@ -71,7 +71,7 @@ export const ManagerReviewView: React.FC = () => {
       <div className="bg-white border border-[#D9C9B5]/70 rounded-2xl divide-y divide-[#D9C9B5]/40">
         {filtered.map((file) => {
           const teacher = assignedTeachers.find((t) => t.id === file.ownerId);
-          const section = visibleSections.find((s) => s.id === file.sectionId);
+          const sectionLabel = getSectionBreadcrumbLabel(visibleSections, file);
 
           return (
             <div
@@ -87,7 +87,7 @@ export const ManagerReviewView: React.FC = () => {
                   </div>
                   <p className="text-xs text-[#666560] tabular-nums">
                     المعلم: <strong className="text-[#454943]">{teacher?.fullName ?? '—'}</strong> ·{' '}
-                    {section?.title ?? ''} · {formatDateArabic(file.uploadedAt)}
+                    {sectionLabel} · {formatDateArabic(file.uploadedAt)}
                   </p>
                   {file.reviewNote && (
                     <p className="text-xs text-[#666560] bg-[#F7F5F0] px-3 py-1.5 rounded-lg inline-block mt-1">

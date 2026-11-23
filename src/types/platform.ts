@@ -4,7 +4,14 @@ export type FileTypeCategory = 'pdf' | 'word' | 'powerpoint' | 'excel' | 'image'
 
 export type ReviewStatus = 'pending' | 'approved' | 'needs_revision';
 
-export type CustomFieldType = 'text' | 'textarea' | 'date' | 'number' | 'select' | 'attachment';
+export type CustomFieldType =
+  | 'subsection'
+  | 'text'
+  | 'textarea'
+  | 'date'
+  | 'number'
+  | 'select'
+  | 'attachment';
 
 export interface CustomFieldDefinition {
   id: string;

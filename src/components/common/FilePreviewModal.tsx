@@ -16,7 +16,9 @@ import type { PortfolioFile } from '../../types/platform';
 import {
   formatBytesArabic,
   formatDateTimeArabic,
+  getFileSubSectionId,
   getFileTypeLabelArabic,
+  getSectionBreadcrumbLabel,
 } from '../../utils/formatters';
 
 interface FilePreviewModalProps {
@@ -47,6 +49,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [targetSectionId, setTargetSectionId] = useState('');
+  const [targetSubSectionId, setTargetSubSectionId] = useState('');
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,6 +59,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
       setTitle(file.title);
       setDescription(file.description);
       setTargetSectionId(file.sectionId);
+      setTargetSubSectionId(getFileSubSectionId(file) ?? '');
       setIsEditing(false);
       setSignedUrl(file.localPreviewUrl ?? null);
       if (!file.localPreviewUrl && isSupabaseLive) {
@@ -74,7 +78,10 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   if (!file) return null;
 
   const owner = users.find((u) => u.id === file.ownerId);
-  const section = visibleSections.find((s) => s.id === file.sectionId);
+  const sectionBreadcrumb = getSectionBreadcrumbLabel(visibleSections, file);
+  const currentSubSectionId = getFileSubSectionId(file) ?? '';
+  const targetSectionObj = visibleSections.find((s) => s.id === targetSectionId);
+  const targetSubSections = targetSectionObj?.customFields ?? [];
 
   const handleDownload = async () => {
     const resolvedUrl = signedUrl || (await getSignedFileUrl(file));
@@ -97,7 +104,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
       `--------------------------------------------------`,
       `العنوان: ${file.title}`,
       `اسم الملف الأصلي: ${file.originalFileName}`,
-      `القسم: ${section?.title ?? 'غير محدد'}`,
+      `القسم: ${sectionBreadcrumb}`,
       `النوع: ${getFileTypeLabelArabic(file.fileType)}`,
       `الحجم: ${formatBytesArabic(file.sizeBytes)}`,
       `الوصف: ${file.description || 'لا يوجد وصف'}`,
@@ -118,8 +125,11 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     renameAndUpdateFile(file.id, { title, description });
-    if (targetSectionId && targetSectionId !== file.sectionId) {
-      moveFileToSection(file.id, targetSectionId);
+    if (
+      (targetSectionId && targetSectionId !== file.sectionId) ||
+      targetSubSectionId !== currentSubSectionId
+    ) {
+      moveFileToSection(file.id, targetSectionId || file.sectionId, targetSubSectionId || undefined);
     }
     setIsEditing(false);
   };
@@ -188,7 +198,10 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                 <label className="block text-xs font-medium text-[#454943] mb-1">نقل إلى قسم</label>
                 <select
                   value={targetSectionId}
-                  onChange={(e) => setTargetSectionId(e.target.value)}
+                  onChange={(e) => {
+                    setTargetSectionId(e.target.value);
+                    setTargetSubSectionId('');
+                  }}
                   className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943]"
                 >
                   {visibleSections
@@ -200,6 +213,25 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                     ))}
                 </select>
               </div>
+              {targetSubSections.length > 0 && (
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-[#454943] mb-1">
+                    القسم الفرعي داخل القسم
+                  </label>
+                  <select
+                    value={targetSubSectionId}
+                    onChange={(e) => setTargetSubSectionId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943]"
+                  >
+                    <option value="">عام في القسم الرئيسي</option>
+                    {targetSubSections.map((sub) => (
+                      <option key={sub.id} value={sub.id}>
+                        {sub.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-[#454943] mb-1">الوصف والملاحظات</label>
@@ -232,7 +264,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#D9C9B5]/50">
               <div className="flex items-center gap-2 text-xs text-[#666560]">
                 <FileText size={14} />
-                <span>القسم: {section?.title ?? 'غير محدد'}</span>
+                <span>القسم: {sectionBreadcrumb}</span>
                 <span aria-hidden="true">·</span>
                 <span className="tabular-nums">تاريخ الرفع: {formatDateTimeArabic(file.uploadedAt)}</span>
               </div>

@@ -14,7 +14,11 @@ import { UploadFileModal } from '../../common/UploadFileModal';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
 import { FileTypeIconBox, ReviewStatusInline } from '../../common/FileTypeIndicator';
 import type { PortfolioFile } from '../../../types/platform';
-import { formatBytesArabic, formatDateArabic } from '../../../utils/formatters';
+import {
+  formatBytesArabic,
+  formatDateArabic,
+  getSectionBreadcrumbLabel,
+} from '../../../utils/formatters';
 
 export const TeacherOverview: React.FC = () => {
   const {
@@ -178,8 +182,7 @@ export const TeacherOverview: React.FC = () => {
 
           <div className="divide-y divide-[#D9C9B5]/40">
             {activeFiles.slice(0, 5).map((file) => {
-              const secTitle =
-                visibleSections.find((s) => s.id === file.sectionId)?.title ?? 'قسم عام';
+              const secTitle = getSectionBreadcrumbLabel(visibleSections, file);
               return (
                 <div
                   key={file.id}
