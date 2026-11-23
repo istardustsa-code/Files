@@ -106,6 +106,9 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
     const customFieldValues: Record<string, string> = {};
     if (subSectionId) {
       customFieldValues._subSectionId = subSectionId;
+      if (selectedSubSection?.label) {
+        customFieldValues._subSectionLabel = selectedSubSection.label;
+      }
     }
 
     uploadFiles(

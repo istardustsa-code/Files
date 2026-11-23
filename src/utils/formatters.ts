@@ -144,7 +144,10 @@ export function getSubSectionTitle(
   const subId = getFileSubSectionId(file);
   if (!subId) return undefined;
   const sec = sections.find((s) => s.id === file.sectionId);
-  return sec?.customFields.find((cf) => cf.id === subId)?.label;
+  return (
+    sec?.customFields.find((cf) => cf.id === subId)?.label ??
+    file.customFieldValues?._subSectionLabel
+  );
 }
 
 export function getSectionBreadcrumbLabel(

@@ -121,6 +121,11 @@ interface PlatformContextValue {
   updateSection: (id: string, updates: Partial<PortfolioSection>) => Promise<void>;
   deleteSection: (id: string) => Promise<void>;
   reorderSection: (id: string, direction: 'up' | 'down') => Promise<void>;
+  addTeacherSubSection: (
+    parentSectionId: string,
+    input: { label: string; placeholder?: string }
+  ) => Promise<void>;
+  deleteTeacherSubSection: (parentSectionId: string, subSectionId: string) => Promise<void>;
 
   // User, School & Group operations
   createUser: (input: Omit<UserAccount, 'id' | 'createdAt' | 'lastActiveAt'>) => void;
@@ -177,7 +182,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [users, setUsers] = useState<UserAccount[]>(isSupabaseLive ? [] : DEMO_USERS);
   const [schools, setSchools] = useState<School[]>(isSupabaseLive ? [] : DEMO_SCHOOLS);
   const [groups, setGroups] = useState<EducationalGroup[]>(isSupabaseLive ? [] : DEMO_GROUPS);
-  const [sections, setSections] = useState<PortfolioSection[]>(
+  const [rawSections, setRawSections] = useState<PortfolioSection[]>(
     isSupabaseLive ? [] : DEMO_SECTIONS
   );
   const [files, setFiles] = useState<PortfolioFile[]>(isSupabaseLive ? [] : DEMO_FILES);
@@ -222,7 +227,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setUsers(data.users);
         setSchools(data.schools);
         setGroups(data.groups);
-        setSections(data.sections);
+        setRawSections(data.sections);
         setFiles(data.files);
         setAchievements(data.achievements);
         setActivityLogs(data.activityLogs);
@@ -459,13 +464,39 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return [];
   }, [currentRole, currentUser, groups, assignedSchools]);
 
+  const TEACHER_SUBSECTION_EXT_CATEGORY = '__teacher_subsections__';
+
+  const sections = useMemo(
+    () => rawSections.filter((s) => s.category !== TEACHER_SUBSECTION_EXT_CATEGORY),
+    [rawSections]
+  );
+
   const visibleSections = useMemo(() => {
+    const extByParent = new Map<string, PortfolioSection['customFields']>();
+    rawSections.forEach((s) => {
+      if (s.category === TEACHER_SUBSECTION_EXT_CATEGORY && s.ownerId === currentUser.id) {
+        const existing = extByParent.get(s.iconName) ?? [];
+        extByParent.set(s.iconName, [...existing, ...s.customFields]);
+      }
+    });
+
     const sorted = [...sections].sort((a, b) => a.order - b.order);
-    if (currentRole === 'super_admin') return sorted;
-    return sorted.filter(
-      (sec) => sec.isActive && (!sec.ownerId || sec.ownerId === currentUser.id)
-    );
-  }, [sections, currentRole, currentUser.id]);
+    const filtered =
+      currentRole === 'super_admin'
+        ? sorted
+        : sorted.filter(
+            (sec) => sec.isActive && (!sec.ownerId || sec.ownerId === currentUser.id)
+          );
+
+    return filtered.map((sec) => {
+      const extraSubs = extByParent.get(sec.id);
+      if (!extraSubs || extraSubs.length === 0) return sec;
+      return {
+        ...sec,
+        customFields: [...sec.customFields, ...extraSubs],
+      };
+    });
+  }, [rawSections, sections, currentRole, currentUser.id]);
 
   const visibleFiles = useMemo(() => {
     if (currentRole === 'super_admin') return files;
@@ -670,12 +701,19 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     targetSubSectionId?: string
   ) => {
     const existing = files.find((f) => f.id === fileId);
-    const targetSec = sections.find((s) => s.id === targetSectionId);
+    const targetSec = visibleSections.find((s) => s.id === targetSectionId);
+    const subTitle = targetSubSectionId
+      ? targetSec?.customFields.find((cf) => cf.id === targetSubSectionId)?.label
+      : undefined;
     const nextCustomValues: Record<string, string> = { ...(existing?.customFieldValues ?? {}) };
     if (targetSubSectionId) {
       nextCustomValues._subSectionId = targetSubSectionId;
+      if (subTitle) {
+        nextCustomValues._subSectionLabel = subTitle;
+      }
     } else {
       delete nextCustomValues._subSectionId;
+      delete nextCustomValues._subSectionLabel;
     }
 
     if (isSupabaseLive) {
@@ -685,9 +723,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           customFieldValues: nextCustomValues,
         });
         setFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
-        const subTitle = targetSubSectionId
-          ? targetSec?.customFields.find((cf) => cf.id === targetSubSectionId)?.label
-          : undefined;
         pushToast(
           subTitle
             ? `تم نقل الملف إلى "${targetSec?.title ?? ''} ← ${subTitle}"`
@@ -711,9 +746,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           : f
       )
     );
-    const subTitle = targetSubSectionId
-      ? targetSec?.customFields.find((cf) => cf.id === targetSubSectionId)?.label
-      : undefined;
     pushToast(
       subTitle
         ? `تم نقل الملف إلى "${targetSec?.title ?? 'القسم المحدد'} ← ${subTitle}"`
@@ -855,7 +887,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (isSupabaseLive) {
       try {
         const created = await SupabaseBackend.createSection({ ...input, order: maxOrder + 1 });
-        setSections((prev) => [...prev, created]);
+        setRawSections((prev) => [...prev, created]);
         await recordActivity('section_create', 'تم إنشاء قسم جديد', created.title);
         pushToast(`تم إنشاء قسم "${created.title}"`);
       } catch (err) {
@@ -869,7 +901,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       id: `sec-${Date.now()}`,
       order: maxOrder + 1,
     };
-    setSections((prev) => [...prev, newSec]);
+    setRawSections((prev) => [...prev, newSec]);
     await recordActivity('section_create', 'تم إنشاء قسم جديد في ملف الإنجاز', newSec.title);
     pushToast(`تم إنشاء قسم "${newSec.title}"`);
   };
@@ -883,8 +915,10 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return;
       }
     }
-    setSections((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
-    await recordActivity('section_update', 'تم تحديث إعدادات القسم', updates.title);
+    setRawSections((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
+    if (currentRole === 'super_admin') {
+      await recordActivity('section_update', 'تم تحديث إعدادات القسم', updates.title);
+    }
     pushToast('تم حفظ تعديلات القسم');
   };
 
@@ -903,10 +937,16 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return;
       }
     }
-    setSections((prev) =>
-      prev.filter((s) => s.id !== id).map((s, idx) => ({ ...s, order: idx + 1 }))
-    );
-    await recordActivity('section_update', 'تم حذف القسم', target?.title);
+    setRawSections((prev) => {
+      const remaining = prev.filter((s) => s.id !== id);
+      let nextOrder = 1;
+      return remaining.map((s) =>
+        s.category === TEACHER_SUBSECTION_EXT_CATEGORY ? s : { ...s, order: nextOrder++ }
+      );
+    });
+    if (currentRole === 'super_admin') {
+      await recordActivity('section_update', 'تم حذف القسم', target?.title);
+    }
     pushToast('تم حذف القسم', 'info');
   };
 
@@ -921,7 +961,10 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     copy[index] = copy[swapIndex];
     copy[swapIndex] = temp;
     const reordered = copy.map((s, i) => ({ ...s, order: i + 1 }));
-    setSections(reordered);
+    const orderMap = new Map(reordered.map((s) => [s.id, s.order]));
+    setRawSections((prev) =>
+      prev.map((s) => (orderMap.has(s.id) ? { ...s, order: orderMap.get(s.id)! } : s))
+    );
 
     if (isSupabaseLive) {
       await Promise.all([
@@ -932,6 +975,156 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       ]).catch(() => undefined);
     }
     pushToast('تم تحديث ترتيب الأقسام', 'info');
+  };
+
+  const addTeacherSubSection = async (
+    parentSectionId: string,
+    input: { label: string; placeholder?: string }
+  ) => {
+    const cleanLabel = input.label.trim();
+    if (!cleanLabel) return;
+    const parent = rawSections.find((s) => s.id === parentSectionId);
+    if (!parent) return;
+
+    const newSubField = {
+      id: `cf-personal-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      label: cleanLabel,
+      type: 'subsection' as const,
+      required: false,
+      placeholder: input.placeholder?.trim() || undefined,
+    };
+
+    // Case 1: Teacher already owns the parent main section -> update directly
+    if (parent.ownerId === currentUser.id) {
+      const nextFields = [...parent.customFields, newSubField];
+      if (isSupabaseLive) {
+        try {
+          await SupabaseBackend.updateSection(parent.id, { customFields: nextFields });
+        } catch (err) {
+          pushToast(err instanceof Error ? err.message : 'تعذر إضافة القسم الفرعي', 'warning');
+          return;
+        }
+      }
+      setRawSections((prev) =>
+        prev.map((s) => (s.id === parent.id ? { ...s, customFields: nextFields } : s))
+      );
+      pushToast(`تمت إضافة القسم الفرعي "${cleanLabel}"`);
+      return;
+    }
+
+    // Case 2: System main section -> store in per-teacher extension row in portfolio_sections
+    const existingExt = rawSections.find(
+      (s) =>
+        s.category === TEACHER_SUBSECTION_EXT_CATEGORY &&
+        s.ownerId === currentUser.id &&
+        s.iconName === parentSectionId
+    );
+
+    if (existingExt) {
+      const nextFields = [...existingExt.customFields, newSubField];
+      if (isSupabaseLive) {
+        try {
+          await SupabaseBackend.updateSection(existingExt.id, { customFields: nextFields });
+        } catch (err) {
+          pushToast(err instanceof Error ? err.message : 'تعذر إضافة القسم الفرعي', 'warning');
+          return;
+        }
+      }
+      setRawSections((prev) =>
+        prev.map((s) => (s.id === existingExt.id ? { ...s, customFields: nextFields } : s))
+      );
+      pushToast(`تمت إضافة القسم الفرعي "${cleanLabel}"`);
+      return;
+    }
+
+    const extPayload: Omit<PortfolioSection, 'id'> = {
+      title: parent.title,
+      description: '',
+      iconName: parentSectionId,
+      accentColor: parent.accentColor,
+      order: 9999,
+      isActive: true,
+      isRequired: false,
+      isSystemDefault: false,
+      ownerId: currentUser.id,
+      category: TEACHER_SUBSECTION_EXT_CATEGORY,
+      customFields: [newSubField],
+    };
+
+    if (isSupabaseLive) {
+      try {
+        const created = await SupabaseBackend.createSection(extPayload);
+        setRawSections((prev) => [...prev, created]);
+        await recordActivity('section_create', `تمت إضافة قسم فرعي: ${cleanLabel}`, cleanLabel);
+        pushToast(`تمت إضافة القسم الفرعي "${cleanLabel}"`);
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : 'تعذر إضافة القسم الفرعي', 'warning');
+      }
+      return;
+    }
+
+    const createdLocal: PortfolioSection = {
+      ...extPayload,
+      id: `sec-ext-${Date.now()}`,
+    };
+    setRawSections((prev) => [...prev, createdLocal]);
+    pushToast(`تمت إضافة القسم الفرعي "${cleanLabel}"`);
+  };
+
+  const deleteTeacherSubSection = async (parentSectionId: string, subSectionId: string) => {
+    const hasFiles = files.some(
+      (f) =>
+        !f.isDeleted &&
+        f.sectionId === parentSectionId &&
+        f.customFieldValues?._subSectionId === subSectionId
+    );
+    const hasNotes = achievements.some(
+      (a) =>
+        a.sectionId === parentSectionId && a.customFieldValues?._subSectionId === subSectionId
+    );
+    if (hasFiles || hasNotes) {
+      pushToast('لا يمكن حذف قسم فرعي يحتوي على ملفات أو نصوص، احذفي محتواه أولاً', 'warning');
+      return;
+    }
+
+    const parent = rawSections.find((s) => s.id === parentSectionId);
+    if (parent && parent.ownerId === currentUser.id) {
+      const nextFields = parent.customFields.filter((cf) => cf.id !== subSectionId);
+      if (isSupabaseLive) {
+        try {
+          await SupabaseBackend.updateSection(parent.id, { customFields: nextFields });
+        } catch (err) {
+          pushToast(err instanceof Error ? err.message : 'تعذر حذف القسم الفرعي', 'warning');
+          return;
+        }
+      }
+      setRawSections((prev) =>
+        prev.map((s) => (s.id === parent.id ? { ...s, customFields: nextFields } : s))
+      );
+      pushToast('تم حذف القسم الفرعي', 'info');
+      return;
+    }
+
+    const extRow = rawSections.find(
+      (s) =>
+        s.category === TEACHER_SUBSECTION_EXT_CATEGORY &&
+        s.ownerId === currentUser.id &&
+        s.iconName === parentSectionId
+    );
+    if (!extRow) return;
+    const nextFields = extRow.customFields.filter((cf) => cf.id !== subSectionId);
+    if (isSupabaseLive) {
+      try {
+        await SupabaseBackend.updateSection(extRow.id, { customFields: nextFields });
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : 'تعذر حذف القسم الفرعي', 'warning');
+        return;
+      }
+    }
+    setRawSections((prev) =>
+      prev.map((s) => (s.id === extRow.id ? { ...s, customFields: nextFields } : s))
+    );
+    pushToast('تم حذف القسم الفرعي', 'info');
   };
 
   // --------------------------------------------------------------------------
@@ -1398,6 +1591,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         updateSection,
         deleteSection,
         reorderSection,
+        addTeacherSubSection,
+        deleteTeacherSubSection,
         createUser,
         updateUser,
         toggleManagerViewPermission,

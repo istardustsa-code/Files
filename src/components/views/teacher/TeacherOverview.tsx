@@ -41,6 +41,9 @@ export const TeacherOverview: React.FC = () => {
   const schoolName = schools.find((s) => s.id === currentUser.schoolId)?.name ?? 'مدرستي';
   const certsCount = activeFiles.filter((f) => f.sectionId === 'sec-3').length;
   const evidenceCount = activeFiles.filter((f) => f.sectionId === 'sec-4').length;
+  const achievementsCount = visibleAchievements.filter(
+    (a) => a.customFieldValues?._entryKind !== 'note'
+  ).length;
   const unreadNotifs = visibleNotifications.filter((n) => !n.isRead);
 
   return (
@@ -117,7 +120,7 @@ export const TeacherOverview: React.FC = () => {
           <div>
             <p className="text-xs text-[#666560]">إنجازاتي الموثقة</p>
             <p className="font-display text-2xl font-bold text-[#454943] tabular-nums mt-0.5">
-              {visibleAchievements.length}
+              {achievementsCount}
             </p>
             <p className="text-xs text-[#666560] mt-1">مبادرات وخطابات شكر</p>
           </div>

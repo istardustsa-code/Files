@@ -17,6 +17,7 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
     assignedSchools,
     assignedGroups,
     visibleFiles,
+    visibleAchievements,
     visibleSections,
     getTeacherCompletionPercent,
   } = usePlatform();
@@ -90,6 +91,11 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
 
   const inspectFiles = inspectTeacher
     ? visibleFiles.filter((f) => f.ownerId === inspectTeacher.id)
+    : [];
+  const inspectNotes = inspectTeacher
+    ? visibleAchievements.filter(
+        (a) => a.ownerId === inspectTeacher.id && a.customFieldValues?._entryKind === 'note'
+      )
     : [];
 
   return (
@@ -196,42 +202,82 @@ export const ManagerTeachersView: React.FC<ManagerTeachersViewProps> = ({ mode }
             <div className="p-4 rounded-xl bg-[#F7F5F0] border border-[#D9C9B5]/70 text-sm text-[#666560] leading-relaxed">
               اختار المعلم إخفاء ملف إنجازه عن مدير العمل حاليًا. لا يمكن عرض الملفات أو الإنجازات حتى يقوم المعلم بتفعيل صلاحية الاطلاع من حسابه.
             </div>
-          ) : inspectFiles.length === 0 ? (
-            <p className="text-sm text-[#666560]">لم يقم المعلم برفع ملفات حتى الآن.</p>
+          ) : inspectFiles.length === 0 && inspectNotes.length === 0 ? (
+            <p className="text-sm text-[#666560]">لم يقم المعلم برفع ملفات أو كتابات حتى الآن.</p>
           ) : (
-            <div className="divide-y divide-[#D9C9B5]/50 border border-[#D9C9B5]/70 rounded-xl">
-              {inspectFiles.map((f) => {
-                const secName = getSectionBreadcrumbLabel(visibleSections, f);
-                return (
-                  <div key={f.id} className="p-3.5 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <FileTypeIconBox fileType={f.fileType} size="sm" />
-                      <div className="min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => setPreviewFile(f)}
-                          className="text-sm font-medium text-[#454943] hover:text-[#556952] truncate block text-right"
-                        >
-                          {f.title}
-                        </button>
-                        <p className="text-xs text-[#666560] tabular-nums">
-                          {secName} · {formatDateArabic(f.uploadedAt)}
-                        </p>
+            <div className="space-y-4">
+              {inspectFiles.length > 0 && (
+                <div className="divide-y divide-[#D9C9B5]/50 border border-[#D9C9B5]/70 rounded-xl">
+                  {inspectFiles.map((f) => {
+                    const secName = getSectionBreadcrumbLabel(visibleSections, f);
+                    return (
+                      <div key={f.id} className="p-3.5 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <FileTypeIconBox fileType={f.fileType} size="sm" />
+                          <div className="min-w-0">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewFile(f)}
+                              className="text-sm font-medium text-[#454943] hover:text-[#556952] truncate block text-right"
+                            >
+                              {f.title}
+                            </button>
+                            <p className="text-xs text-[#666560] tabular-nums">
+                              {secName} · {formatDateArabic(f.uploadedAt)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2.5 shrink-0">
+                          <ReviewStatusInline status={f.reviewStatus} />
+                          <button
+                            type="button"
+                            onClick={() => setPreviewFile(f)}
+                            className="px-2.5 py-1 text-xs font-medium bg-[#F7F5F0] text-[#454943] hover:bg-[#D9C9B5]/40 rounded-lg"
+                          >
+                            معاينة
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2.5 shrink-0">
-                      <ReviewStatusInline status={f.reviewStatus} />
-                      <button
-                        type="button"
-                        onClick={() => setPreviewFile(f)}
-                        className="px-2.5 py-1 text-xs font-medium bg-[#F7F5F0] text-[#454943] hover:bg-[#D9C9B5]/40 rounded-lg"
-                      >
-                        معاينة
-                      </button>
-                    </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {inspectNotes.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-[#666560]">
+                    الكتابات والملاحظات النصية ({inspectNotes.length})
+                  </p>
+                  <div className="space-y-2">
+                    {inspectNotes.map((n) => {
+                      const secTitle =
+                        visibleSections.find((s) => s.id === n.sectionId)?.title ?? 'قسم عام';
+                      const subLabel = n.customFieldValues?._subSectionLabel;
+                      return (
+                        <div
+                          key={n.id}
+                          className="p-3 rounded-xl bg-[#F7F5F0]/60 border border-[#D9C9B5]/60 space-y-1"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-medium text-[#454943]">{n.title}</p>
+                            <span className="text-[11px] text-[#666560] tabular-nums">
+                              {formatDateArabic(n.date)}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#556952]">
+                            {subLabel ? `${secTitle} ← ${subLabel}` : secTitle}
+                          </p>
+                          {n.description && (
+                            <p className="text-xs text-[#666560] whitespace-pre-wrap leading-relaxed">
+                              {n.description}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              )}
             </div>
           )}
         </div>
