@@ -102,6 +102,7 @@ interface PlatformContextValue {
     updates: { title: string; description: string; customFieldValues?: Record<string, string> }
   ) => Promise<void>;
   replaceFileBinary: (fileId: string, newFile: File) => Promise<void>;
+  appendFilesToEntry: (targetFileId: string, newFiles: File[]) => Promise<void>;
   moveFileToSection: (
     fileId: string,
     targetSectionId: string,
@@ -629,11 +630,35 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     fileId: string,
     updates: { title: string; description: string; customFieldValues?: Record<string, string> }
   ) => {
+    const existing = files.find((f) => f.id === fileId);
+    const bundleId = existing?.customFieldValues?._bundleId;
+    const targetIds = bundleId
+      ? files
+          .filter(
+            (f) =>
+              !f.isDeleted &&
+              f.ownerId === existing?.ownerId &&
+              f.customFieldValues?._bundleId === bundleId
+          )
+          .map((f) => f.id)
+      : [fileId];
+
     if (isSupabaseLive) {
       try {
-        const updated = await SupabaseBackend.updateFileMetadata(fileId, updates);
-        setFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
-        await recordActivity('file_update', 'تم تعديل بيانات الملف', updated.title);
+        const updatedList = await Promise.all(
+          targetIds.map((id) =>
+            SupabaseBackend.updateFileMetadata(id, {
+              title: updates.title,
+              description: updates.description,
+              ...(id === fileId && updates.customFieldValues
+                ? { customFieldValues: updates.customFieldValues }
+                : {}),
+            })
+          )
+        );
+        const updatedMap = new Map(updatedList.map((u) => [u.id, u]));
+        setFiles((prev) => prev.map((f) => updatedMap.get(f.id) ?? f));
+        await recordActivity('file_update', 'تم تعديل بيانات الملف', updates.title);
         pushToast('تم حفظ تعديلات الملف');
       } catch (err) {
         pushToast(err instanceof Error ? err.message : 'تعذر تعديل الملف', 'warning');
@@ -641,14 +666,18 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
 
+    const idSet = new Set(targetIds);
     setFiles((prev) =>
       prev.map((f) =>
-        f.id === fileId
+        idSet.has(f.id)
           ? {
               ...f,
               title: updates.title.trim() || f.title,
               description: updates.description,
-              customFieldValues: updates.customFieldValues ?? f.customFieldValues,
+              customFieldValues:
+                f.id === fileId && updates.customFieldValues
+                  ? updates.customFieldValues
+                  : f.customFieldValues,
               updatedAt: new Date().toISOString(),
             }
           : f
@@ -695,6 +724,54 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     pushToast('تم استبدال الملف بنجاح');
   };
 
+  const appendFilesToEntry = async (targetFileId: string, newFiles: File[]) => {
+    if (newFiles.length === 0) return;
+    const targetFile = files.find((f) => f.id === targetFileId);
+    if (!targetFile) return;
+
+    const existingBundleId = targetFile.customFieldValues?._bundleId;
+    const bundleId =
+      typeof existingBundleId === 'string' && existingBundleId.trim()
+        ? existingBundleId.trim()
+        : `bnd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    const sharedCustomValues: Record<string, string> = {
+      ...(targetFile.customFieldValues ?? {}),
+      _bundleId: bundleId,
+    };
+
+    // Ensure the original file carries the _bundleId if it was uploaded solo
+    if (!existingBundleId) {
+      if (isSupabaseLive) {
+        try {
+          const updatedOrigin = await SupabaseBackend.updateFileMetadata(targetFile.id, {
+            customFieldValues: sharedCustomValues,
+          });
+          setFiles((prev) => prev.map((f) => (f.id === targetFile.id ? updatedOrigin : f)));
+        } catch (err) {
+          pushToast(err instanceof Error ? err.message : 'تعذر ربط المرفقات الإضافية', 'warning');
+          return;
+        }
+      } else {
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === targetFile.id ? { ...f, customFieldValues: sharedCustomValues } : f
+          )
+        );
+      }
+    }
+
+    await uploadFiles(
+      newFiles.map((file) => ({
+        file,
+        title: targetFile.title,
+        description: targetFile.description,
+        sectionId: targetFile.sectionId,
+        customFieldValues: sharedCustomValues,
+      }))
+    );
+  };
+
   const moveFileToSection = async (
     fileId: string,
     targetSectionId: string,
@@ -705,24 +782,45 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const subTitle = targetSubSectionId
       ? targetSec?.customFields.find((cf) => cf.id === targetSubSectionId)?.label
       : undefined;
-    const nextCustomValues: Record<string, string> = { ...(existing?.customFieldValues ?? {}) };
-    if (targetSubSectionId) {
-      nextCustomValues._subSectionId = targetSubSectionId;
-      if (subTitle) {
-        nextCustomValues._subSectionLabel = subTitle;
+
+    const buildNextValues = (prevValues?: Record<string, string>) => {
+      const nextCustomValues: Record<string, string> = { ...(prevValues ?? {}) };
+      if (targetSubSectionId) {
+        nextCustomValues._subSectionId = targetSubSectionId;
+        if (subTitle) {
+          nextCustomValues._subSectionLabel = subTitle;
+        }
+      } else {
+        delete nextCustomValues._subSectionId;
+        delete nextCustomValues._subSectionLabel;
       }
-    } else {
-      delete nextCustomValues._subSectionId;
-      delete nextCustomValues._subSectionLabel;
-    }
+      return nextCustomValues;
+    };
+
+    const bundleId = existing?.customFieldValues?._bundleId;
+    const siblingFiles = bundleId
+      ? files.filter(
+          (f) =>
+            !f.isDeleted &&
+            f.ownerId === existing?.ownerId &&
+            f.customFieldValues?._bundleId === bundleId
+        )
+      : existing
+        ? [existing]
+        : [];
 
     if (isSupabaseLive) {
       try {
-        const updated = await SupabaseBackend.updateFileMetadata(fileId, {
-          sectionId: targetSectionId,
-          customFieldValues: nextCustomValues,
-        });
-        setFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
+        const updatedList = await Promise.all(
+          siblingFiles.map((f) =>
+            SupabaseBackend.updateFileMetadata(f.id, {
+              sectionId: targetSectionId,
+              customFieldValues: buildNextValues(f.customFieldValues),
+            })
+          )
+        );
+        const updatedMap = new Map(updatedList.map((u) => [u.id, u]));
+        setFiles((prev) => prev.map((f) => updatedMap.get(f.id) ?? f));
         pushToast(
           subTitle
             ? `تم نقل الملف إلى "${targetSec?.title ?? ''} ← ${subTitle}"`
@@ -734,13 +832,14 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
 
+    const siblingIdSet = new Set(siblingFiles.map((f) => f.id));
     setFiles((prev) =>
       prev.map((f) =>
-        f.id === fileId
+        siblingIdSet.has(f.id)
           ? {
               ...f,
               sectionId: targetSectionId,
-              customFieldValues: nextCustomValues,
+              customFieldValues: buildNextValues(f.customFieldValues),
               updatedAt: new Date().toISOString(),
             }
           : f
@@ -1580,6 +1679,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         getSignedFileUrl,
         renameAndUpdateFile,
         replaceFileBinary,
+        appendFilesToEntry,
         moveFileToSection,
         softDeleteFile,
         restoreFile,

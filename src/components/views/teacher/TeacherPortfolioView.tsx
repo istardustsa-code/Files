@@ -12,6 +12,8 @@ import {
   EyeOff,
   FileText,
   Image as ImageIcon,
+  ImagePlus,
+  FilePlus2,
   PenLine,
   X,
 } from 'lucide-react';
@@ -31,8 +33,8 @@ import {
   detectFileCategory,
   formatBytesArabic,
   formatDateArabic,
+  getFileBundleId,
   getFileSubSectionId,
-  getFileTypeLabelArabic,
 } from '../../../utils/formatters';
 
 interface TeacherPortfolioViewProps {
@@ -76,6 +78,8 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
   const [subFileNote, setSubFileNote] = useState('');
   const [subDragging, setSubDragging] = useState(false);
   const subFileInputRef = useRef<HTMLInputElement>(null);
+  const subImageInputRef = useRef<HTMLInputElement>(null);
+  const subDocInputRef = useRef<HTMLInputElement>(null);
 
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
@@ -197,19 +201,21 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
 
     const { section, sub } = resolvedSubTarget;
     const cleanTitle = subFileTitle.trim();
+    const bundleId =
+      subFilesQueue.length > 1
+        ? `bnd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        : undefined;
+
     await uploadFiles(
-      subFilesQueue.map((file, idx) => ({
+      subFilesQueue.map((file) => ({
         file,
-        title: cleanTitle
-          ? subFilesQueue.length === 1
-            ? cleanTitle
-            : `${cleanTitle} (${idx + 1})`
-          : file.name.replace(/\.[^/.]+$/, ''),
+        title: cleanTitle || file.name.replace(/\.[^/.]+$/, ''),
         description: subFileNote.trim(),
         sectionId: section.id,
         customFieldValues: {
           _subSectionId: sub.id,
           _subSectionLabel: sub.label,
+          ...(bundleId ? { _bundleId: bundleId } : {}),
         },
       }))
     );
@@ -485,6 +491,26 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
           getFileSubSectionId(f) === resolvedSubTarget.sub.id
       )
     : [];
+
+  const groupedModalEntries = useMemo(() => {
+    const groups: { key: string; primary: PortfolioFile; count: number }[] = [];
+    const indexByBundle = new Map<string, number>();
+
+    activeModalFiles.forEach((file) => {
+      const bId = getFileBundleId(file);
+      if (bId) {
+        const existingIdx = indexByBundle.get(bId);
+        if (existingIdx !== undefined) {
+          groups[existingIdx].count += 1;
+          return;
+        }
+        indexByBundle.set(bId, groups.length);
+      }
+      groups.push({ key: bId || file.id, primary: file, count: 1 });
+    });
+
+    return groups;
+  }, [activeModalFiles]);
 
   const activeModalNotes = resolvedSubTarget
     ? subSectionNotes.filter(
@@ -764,29 +790,34 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
               </div>
             )}
 
-            {/* Saved Items inside this sub-section: single clean title box per item */}
-            {(activeModalFiles.length > 0 || activeModalNotes.length > 0) && (
+            {/* Saved Items inside this sub-section: single clean title box per entry/bundle */}
+            {(groupedModalEntries.length > 0 || activeModalNotes.length > 0) && (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-semibold text-[#454943]">
-                    العناصر المحفوظة ({activeModalFiles.length + activeModalNotes.length})
+                    العناصر المحفوظة ({groupedModalEntries.length + activeModalNotes.length})
                   </h4>
                   <span className="text-[11px] text-[#666560]">
-                    اضغطي على أي مربع لعرض كل البيانات والتفاصيل
+                    اضغطي على أي مربع لعرض كل المرفقات والصور والبيانات
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {activeModalFiles.map((file) => (
+                  {groupedModalEntries.map(({ key, primary, count }) => (
                     <button
-                      key={file.id}
+                      key={key}
                       type="button"
-                      onClick={() => setPreviewFile(file)}
-                      className="group bg-white border border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50 rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2.5 transition-all hover:shadow-xs"
+                      onClick={() => setPreviewFile(primary)}
+                      className="relative group bg-white border border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50 rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2 transition-all hover:shadow-xs"
                     >
-                      <FileTypeIconBox fileType={file.fileType} size="sm" />
+                      {count > 1 && (
+                        <span className="absolute top-2 left-2 px-1.5 h-5 rounded-md bg-[#556952] text-white text-[10px] font-mono-num font-medium flex items-center justify-center">
+                          {count}
+                        </span>
+                      )}
+                      <FileTypeIconBox fileType={primary.fileType} size="sm" />
                       <p className="text-xs sm:text-[13px] font-semibold text-[#454943] line-clamp-2 leading-snug w-full">
-                        {file.title}
+                        {primary.title}
                       </p>
                     </button>
                   ))}
@@ -796,7 +827,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                       key={n.id}
                       type="button"
                       onClick={() => setPreviewNote(n)}
-                      className="group bg-white border border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50 rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2.5 transition-all hover:shadow-xs"
+                      className="group bg-white border border-[#D9C9B5]/80 hover:border-[#556952] hover:bg-[#F7F5F0]/50 rounded-xl p-3.5 flex flex-col items-center justify-center text-center gap-2 transition-all hover:shadow-xs"
                     >
                       <div className="w-10 h-10 rounded-xl bg-[#A8B9A5]/25 text-[#3F573C] flex items-center justify-center shrink-0">
                         <PenLine size={17} />
@@ -863,21 +894,70 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                       ref={subFileInputRef}
                       type="file"
                       multiple
-                      accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,image/*"
                       className="hidden"
-                      onChange={(e) => handleSubIncomingFiles(e.target.files)}
+                      onChange={(e) => {
+                        handleSubIncomingFiles(e.target.files);
+                        e.target.value = '';
+                      }}
+                    />
+                    <input
+                      ref={subImageInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        handleSubIncomingFiles(e.target.files);
+                        e.target.value = '';
+                      }}
+                    />
+                    <input
+                      ref={subDocInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv"
+                      className="hidden"
+                      onChange={(e) => {
+                        handleSubIncomingFiles(e.target.files);
+                        e.target.value = '';
+                      }}
                     />
                     <UploadCloud size={22} className="mx-auto mb-2 text-[#556952]" />
                     <p className="text-xs sm:text-sm font-medium text-[#454943]">
-                      اضغطي هنا لاختيار ملفات أو صور، أو اسحبيها وأفلتيها
+                      اسحبي عدة صور أو ملفات هنا، أو اختاري من الأزرار بالأسفل
                     </p>
                     <p className="text-[11px] text-[#666560] mt-1 tabular-nums">
-                      PDF، Word، PowerPoint، Excel، الصور · حتى {settings.maxFileSizeMb} م.ب
+                      يمكنك إضافة أكثر من صورة وأكثر من مرفق معاً · حتى {settings.maxFileSizeMb} م.ب للملف
                     </p>
+                    <div
+                      className="mt-3 flex flex-wrap items-center justify-center gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => subImageInputRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[#F7F5F0] border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-lg"
+                      >
+                        <ImagePlus size={14} className="text-[#556952]" />
+                        <span>إضافة صور (متعددة)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => subDocInputRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[#F7F5F0] border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-lg"
+                      >
+                        <FilePlus2 size={14} className="text-[#556952]" />
+                        <span>إضافة ملفات (متعددة)</span>
+                      </button>
+                    </div>
                   </div>
 
                   {subFilesQueue.length > 0 && (
-                    <div className="border border-[#D9C9B5]/80 rounded-xl divide-y divide-[#D9C9B5]/50 bg-white max-h-40 overflow-y-auto">
+                    <div className="border border-[#D9C9B5]/80 rounded-xl divide-y divide-[#D9C9B5]/50 bg-white max-h-44 overflow-y-auto">
+                      <div className="px-3 py-2 bg-[#F7F5F0]/80 text-xs font-medium text-[#454943] flex items-center justify-between">
+                        <span>المحدد حالياً ({subFilesQueue.length} مرفقات وصور)</span>
+                        <span className="text-[11px] text-[#666560]">يمكنك إضافة المزيد قبل الحفظ</span>
+                      </div>
                       {subFilesQueue.map((file, idx) => (
                         <div
                           key={`${file.name}-${idx}`}

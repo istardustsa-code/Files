@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { UploadCloud, X, FileText, Image as ImageIcon } from 'lucide-react';
+import { UploadCloud, X, FileText, Image as ImageIcon, ImagePlus, FilePlus2 } from 'lucide-react';
 import { Modal } from './Modal';
 import { usePlatform } from '../../context/PlatformContext';
 import { detectFileCategory, formatBytesArabic, getFileTypeLabelArabic } from '../../utils/formatters';
@@ -32,6 +32,8 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
   const [description, setDescription] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -106,6 +108,11 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
     const targetSecId = selectedSection?.id || activeSections[0]?.id;
     if (!targetSecId) return;
 
+    const bundleId =
+      selectedFiles.length > 1
+        ? `bnd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        : undefined;
+
     const customFieldValues: Record<string, string> = {};
     if (subSectionId) {
       customFieldValues._subSectionId = subSectionId;
@@ -113,15 +120,15 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
         customFieldValues._subSectionLabel = selectedSubSection.label;
       }
     }
+    if (bundleId) {
+      customFieldValues._bundleId = bundleId;
+    }
 
+    const cleanTitle = customTitle.trim();
     uploadFiles(
-      selectedFiles.map((file, idx) => ({
+      selectedFiles.map((file) => ({
         file,
-        title: customTitle.trim()
-          ? selectedFiles.length === 1
-            ? customTitle.trim()
-            : `${customTitle.trim()} (${idx + 1})`
-          : file.name.replace(/\.[^/.]+$/, ''),
+        title: cleanTitle || file.name.replace(/\.[^/.]+$/, ''),
         description,
         sectionId: targetSecId,
         customFieldValues,
@@ -171,25 +178,73 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,image/*"
             className="hidden"
-            onChange={(e) => handleIncomingFiles(e.target.files)}
+            onChange={(e) => {
+              handleIncomingFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={imageInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              handleIncomingFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={docInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv"
+            className="hidden"
+            onChange={(e) => {
+              handleIncomingFiles(e.target.files);
+              e.target.value = '';
+            }}
           />
           <div className="w-11 h-11 rounded-xl bg-white border border-[#D9C9B5]/80 flex items-center justify-center mx-auto mb-3 text-[#556952]">
             <UploadCloud size={22} />
           </div>
           <p className="text-sm font-medium text-[#454943]">
-            اسحبي الملفات أو الصور وأفلتيها هنا، أو انقري للاختيار من جهازك
+            اسحبي عدة ملفات أو صور هنا، أو اختاري من الأزرار بالأسفل
           </p>
           <p className="text-xs text-[#666560] mt-1 tabular-nums">
-            الحد الأقصى لحجم الملف: {settings.maxFileSizeMb} م.ب · الصيغ المسموحة:{' '}
-            {settings.allowedFileTypes.map(getFileTypeLabelArabic).join('، ')}
+            يمكنك إضافة أكثر من صورة وأكثر من مرفق معاً · حتى {settings.maxFileSizeMb} م.ب للملف
           </p>
+          <div
+            className="mt-3.5 flex flex-wrap items-center justify-center gap-2.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-xl"
+            >
+              <ImagePlus size={14} className="text-[#556952]" />
+              <span>اختيار صور (متعددة)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => docInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-xl"
+            >
+              <FilePlus2 size={14} className="text-[#556952]" />
+              <span>اختيار ملفات / مستندات (متعددة)</span>
+            </button>
+          </div>
         </div>
 
         {/* Selected files queue */}
         {selectedFiles.length > 0 && (
           <div className="border border-[#D9C9B5]/80 rounded-xl divide-y divide-[#D9C9B5]/50 bg-[#F7F5F0]/40 max-h-48 overflow-y-auto">
+            <div className="px-3.5 py-2 bg-[#F7F5F0] text-xs font-medium text-[#454943] flex items-center justify-between">
+              <span>المحدد حالياً ({selectedFiles.length} مرفقات وصور)</span>
+              <span className="text-[11px] text-[#666560]">يمكنك إضافة المزيد قبل الحفظ</span>
+            </div>
             {selectedFiles.map((file, idx) => (
               <div key={`${file.name}-${idx}`} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">

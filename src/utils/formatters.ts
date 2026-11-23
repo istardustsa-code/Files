@@ -159,3 +159,8 @@ export function getSectionBreadcrumbLabel(
   const subTitle = getSubSectionTitle(sections, file);
   return subTitle ? `${sec.title} ← ${subTitle}` : sec.title;
 }
+
+export function getFileBundleId(file: PortfolioFile): string | undefined {
+  const val = file.customFieldValues?._bundleId;
+  return typeof val === 'string' && val.trim() ? val.trim() : undefined;
+}
