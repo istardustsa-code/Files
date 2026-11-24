@@ -1,8 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { UploadCloud, X, FileText, Image as ImageIcon, ImagePlus, FilePlus2 } from 'lucide-react';
+import {
+  UploadCloud,
+  X,
+  FileText,
+  Image as ImageIcon,
+  ImagePlus,
+  FilePlus2,
+  Zap,
+} from 'lucide-react';
 import { Modal } from './Modal';
+import { DuplicateContentBadge } from './FileTypeIndicator';
 import { usePlatform } from '../../context/PlatformContext';
-import { detectFileCategory, formatBytesArabic, getFileTypeLabelArabic } from '../../utils/formatters';
+import { detectFileCategory, formatBytesArabic } from '../../utils/formatters';
+import { computeFileContentHash, getFileContentHashKey } from '../../utils/fileHash';
 
 interface UploadFileModalProps {
   isOpen: boolean;
@@ -17,19 +27,21 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
   defaultSectionId,
   defaultSubSectionId,
 }) => {
-  const { visibleSections, settings, uploadFiles, pushToast } = usePlatform();
+  const { visibleSections, visibleFiles, settings, uploadFiles, pushToast } = usePlatform();
   const activeSections = useMemo(
     () => visibleSections.filter((s) => s.isActive),
     [visibleSections]
   );
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [queuedHashes, setQueuedHashes] = useState<string[]>([]);
   const [sectionId, setSectionId] = useState<string>(
     defaultSectionId || activeSections[0]?.id || ''
   );
   const [subSectionId, setSubSectionId] = useState<string>(defaultSubSectionId || '');
   const [customTitle, setCustomTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [instantUploadOnPick, setInstantUploadOnPick] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -53,6 +65,32 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
     [availableSubSections, subSectionId]
   );
 
+  const existingContentHashes = useMemo(() => {
+    const map = new Map<string, string>();
+    visibleFiles.forEach((f) => {
+      if (f.isDeleted) return;
+      const h = getFileContentHashKey(f);
+      if (h) map.set(h, f.title);
+    });
+    return map;
+  }, [visibleFiles]);
+
+  useEffect(() => {
+    let active = true;
+    if (selectedFiles.length === 0) {
+      setQueuedHashes([]);
+      return;
+    }
+    Promise.all(
+      selectedFiles.map((f) => computeFileContentHash(f).catch(() => ''))
+    ).then((hashes) => {
+      if (active) setQueuedHashes(hashes);
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedFiles]);
+
   const imagePreviews = useMemo(() => {
     return selectedFiles.map((f) =>
       f.type.startsWith('image/') ? URL.createObjectURL(f) : null
@@ -66,6 +104,44 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
       });
     };
   }, [imagePreviews]);
+
+  const dispatchUploadBatch = (filesToUpload: File[]) => {
+    const targetSecId = selectedSection?.id || activeSections[0]?.id;
+    if (!targetSecId || filesToUpload.length === 0) return;
+
+    const bundleId =
+      filesToUpload.length > 1
+        ? `bnd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        : undefined;
+
+    const customFieldValues: Record<string, string> = {};
+    if (subSectionId) {
+      customFieldValues._subSectionId = subSectionId;
+      if (selectedSubSection?.label) {
+        customFieldValues._subSectionLabel = selectedSubSection.label;
+      }
+    }
+    if (bundleId) {
+      customFieldValues._bundleId = bundleId;
+    }
+
+    const cleanTitle = customTitle.trim();
+    void uploadFiles(
+      filesToUpload.map((file) => ({
+        file,
+        title: cleanTitle || file.name.replace(/\.[^/.]+$/, ''),
+        description,
+        sectionId: targetSecId,
+        customFieldValues,
+      }))
+    );
+
+    setSelectedFiles([]);
+    setCustomTitle('');
+    setDescription('');
+    setSubSectionId('');
+    onClose();
+  };
 
   const handleIncomingFiles = (incoming: FileList | null) => {
     if (!incoming || incoming.length === 0) return;
@@ -89,6 +165,10 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
     });
 
     if (valid.length > 0) {
+      if (instantUploadOnPick) {
+        dispatchUploadBatch(valid);
+        return;
+      }
       setSelectedFiles((prev) => [...prev, ...valid]);
       if (valid.length === 1 && !customTitle) {
         const base = valid[0].name.replace(/\.[^/.]+$/, '');
@@ -105,41 +185,7 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
       pushToast('يرجى اختيار ملف أو صورة واحدة على الأقل للرفع', 'warning');
       return;
     }
-    const targetSecId = selectedSection?.id || activeSections[0]?.id;
-    if (!targetSecId) return;
-
-    const bundleId =
-      selectedFiles.length > 1
-        ? `bnd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-        : undefined;
-
-    const customFieldValues: Record<string, string> = {};
-    if (subSectionId) {
-      customFieldValues._subSectionId = subSectionId;
-      if (selectedSubSection?.label) {
-        customFieldValues._subSectionLabel = selectedSubSection.label;
-      }
-    }
-    if (bundleId) {
-      customFieldValues._bundleId = bundleId;
-    }
-
-    const cleanTitle = customTitle.trim();
-    uploadFiles(
-      selectedFiles.map((file) => ({
-        file,
-        title: cleanTitle || file.name.replace(/\.[^/.]+$/, ''),
-        description,
-        sectionId: targetSecId,
-        customFieldValues,
-      }))
-    );
-
-    setSelectedFiles([]);
-    setCustomTitle('');
-    setDescription('');
-    setSubSectionId('');
-    onClose();
+    dispatchUploadBatch(selectedFiles);
   };
 
   return (
@@ -154,130 +200,24 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
       subtitle="يدعم رفع الملفات، المرفقات، والصور (PDF، Word، PowerPoint، Excel، PNG/JPG)"
       maxWidthClass="max-w-2xl"
     >
-      <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Drop zone */}
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setIsDragging(true);
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setIsDragging(false);
-            handleIncomingFiles(e.dataTransfer.files);
-          }}
-          onClick={() => fileInputRef.current?.click()}
-          className={`cursor-pointer border-2 border-dashed rounded-2xl p-6 text-center transition-colors ${
-            isDragging
-              ? 'border-[#556952] bg-[#A8B9A5]/15'
-              : 'border-[#D9C9B5] bg-[#F7F5F0]/60 hover:bg-[#F7F5F0]'
-          }`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              handleIncomingFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          <input
-            ref={imageInputRef}
-            type="file"
-            multiple
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              handleIncomingFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          <input
-            ref={docInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv"
-            className="hidden"
-            onChange={(e) => {
-              handleIncomingFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          <div className="w-11 h-11 rounded-xl bg-white border border-[#D9C9B5]/80 flex items-center justify-center mx-auto mb-3 text-[#556952]">
-            <UploadCloud size={22} />
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Instant Auto-Upload Toggle */}
+        <label className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-[#F7F5F0]/80 border border-[#D9C9B5]/70 cursor-pointer">
+          <div className="flex items-center gap-2 text-xs text-[#454943]">
+            <Zap size={14} className="text-[#556952] shrink-0" />
+            <span>
+              <strong>رفع فوري تلقائي</strong> بمجرد اختيار الملفات أو سحبها (بدون انتظار أو خطوة إضافية)
+            </span>
           </div>
-          <p className="text-sm font-medium text-[#454943]">
-            اسحبي عدة ملفات أو صور هنا، أو اختاري من الأزرار بالأسفل
-          </p>
-          <p className="text-xs text-[#666560] mt-1 tabular-nums">
-            يمكنك إضافة أكثر من صورة وأكثر من مرفق معاً أو ملفات كبيرة (+100 صفحة) · حتى {settings.maxFileSizeMb} م.ب للملف
-          </p>
-          <div
-            className="mt-3.5 flex flex-wrap items-center justify-center gap-2.5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => imageInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-xl"
-            >
-              <ImagePlus size={14} className="text-[#556952]" />
-              <span>اختيار صور (متعددة)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => docInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-xl"
-            >
-              <FilePlus2 size={14} className="text-[#556952]" />
-              <span>اختيار ملفات / مستندات (متعددة)</span>
-            </button>
-          </div>
-        </div>
+          <input
+            type="checkbox"
+            checked={instantUploadOnPick}
+            onChange={(e) => setInstantUploadOnPick(e.target.checked)}
+            className="w-4 h-4 accent-[#556952] rounded cursor-pointer shrink-0"
+          />
+        </label>
 
-        {/* Selected files queue */}
-        {selectedFiles.length > 0 && (
-          <div className="border border-[#D9C9B5]/80 rounded-xl divide-y divide-[#D9C9B5]/50 bg-[#F7F5F0]/40 max-h-48 overflow-y-auto">
-            <div className="px-3.5 py-2 bg-[#F7F5F0] text-xs font-medium text-[#454943] flex items-center justify-between">
-              <span>المحدد حالياً ({selectedFiles.length} مرفقات وصور)</span>
-              <span className="text-[11px] text-[#666560]">يمكنك إضافة المزيد قبل الحفظ</span>
-            </div>
-            {selectedFiles.map((file, idx) => (
-              <div key={`${file.name}-${idx}`} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  {imagePreviews[idx] ? (
-                    <img
-                      src={imagePreviews[idx]!}
-                      alt={file.name}
-                      className="w-9 h-9 rounded-lg object-cover border border-[#D9C9B5]/70 shrink-0"
-                    />
-                  ) : file.type.startsWith('image/') ? (
-                    <ImageIcon size={16} className="text-[#556952] shrink-0" />
-                  ) : (
-                    <FileText size={16} className="text-[#556952] shrink-0" />
-                  )}
-                  <span className="text-sm text-[#454943] truncate">{file.name}</span>
-                  <span className="text-xs text-[#666560] font-mono-num shrink-0">
-                    {formatBytesArabic(file.size)}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
-                  className="text-[#85847E] hover:text-[#8A5E56] p-1 shrink-0"
-                  aria-label="إزالة الملف من القائمة"
-                >
-                  <X size={15} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Section & Sub-section & Title */}
+        {/* Section & Sub-section first when quick-uploading */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-[#454943] mb-1.5">
@@ -318,28 +258,167 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
               </select>
             </div>
           )}
+        </div>
 
-          <div className={availableSubSections.length > 0 ? 'sm:col-span-2' : ''}>
-            <label className="block text-xs font-medium text-[#454943] mb-1.5">
-              اسم الملف أو العنوان المطلوب
-            </label>
-            <input
-              type="text"
-              value={customTitle}
-              onChange={(e) => setCustomTitle(e.target.value)}
-              placeholder="مثال: شهادة برنامج التعلم النشط أو صورة النشاط"
-              className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943] placeholder:text-[#85847E]"
-            />
+        {/* Drop zone */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            handleIncomingFiles(e.dataTransfer.files);
+          }}
+          onClick={() => fileInputRef.current?.click()}
+          className={`cursor-pointer border-2 border-dashed rounded-2xl p-5 text-center transition-colors ${
+            isDragging
+              ? 'border-[#556952] bg-[#A8B9A5]/15'
+              : 'border-[#D9C9B5] bg-[#F7F5F0]/60 hover:bg-[#F7F5F0]'
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              handleIncomingFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={imageInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              handleIncomingFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={docInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv"
+            className="hidden"
+            onChange={(e) => {
+              handleIncomingFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <div className="w-10 h-10 rounded-xl bg-white border border-[#D9C9B5]/80 flex items-center justify-center mx-auto mb-2.5 text-[#556952]">
+            <UploadCloud size={20} />
+          </div>
+          <p className="text-sm font-medium text-[#454943]">
+            {instantUploadOnPick
+              ? 'اسحبي الملفات أو اضغطي هنا للرفع الفوري المباشر'
+              : 'اسحبي عدة ملفات أو صور هنا، أو اختاري من الأزرار بالأسفل'}
+          </p>
+          <p className="text-xs text-[#666560] mt-1 tabular-nums">
+            رفع متوازي سريع · يدعم ملفات +100 صفحة حتى {settings.maxFileSizeMb} م.ب للملف
+          </p>
+          <div
+            className="mt-3 flex flex-wrap items-center justify-center gap-2.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-xl"
+            >
+              <ImagePlus size={14} className="text-[#556952]" />
+              <span>اختيار صور (متعددة)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => docInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium bg-white border border-[#D9C9B5] text-[#454943] hover:border-[#556952] rounded-xl"
+            >
+              <FilePlus2 size={14} className="text-[#556952]" />
+              <span>اختيار ملفات / مستندات (متعددة)</span>
+            </button>
           </div>
         </div>
 
-        {selectedSubSection?.placeholder && (
-          <div className="p-3 rounded-xl bg-[#F7F5F0] border border-[#D9C9B5]/60 text-xs text-[#666560]">
-            توضيح القسم الفرعي: {selectedSubSection.placeholder}
+        {/* Selected files queue with live internal content duplicate preview */}
+        {selectedFiles.length > 0 && (
+          <div className="border border-[#D9C9B5]/80 rounded-xl divide-y divide-[#D9C9B5]/50 bg-[#F7F5F0]/40 max-h-48 overflow-y-auto">
+            <div className="px-3.5 py-2 bg-[#F7F5F0] text-xs font-medium text-[#454943] flex items-center justify-between">
+              <span>المحدد حالياً ({selectedFiles.length} مرفقات وصور)</span>
+              <span className="text-[11px] text-[#666560]">يمكنك إضافة المزيد قبل الحفظ</span>
+            </div>
+            {selectedFiles.map((file, idx) => {
+              const hash = queuedHashes[idx];
+              const existingMatchTitle = hash ? existingContentHashes.get(hash) : undefined;
+              const duplicateInQueue =
+                Boolean(hash) &&
+                queuedHashes.some((otherHash, otherIdx) => otherIdx !== idx && otherHash === hash);
+              const isDup = Boolean(existingMatchTitle || duplicateInQueue);
+
+              return (
+                <div
+                  key={`${file.name}-${idx}`}
+                  className="flex items-center justify-between gap-3 px-3.5 py-2.5"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {imagePreviews[idx] ? (
+                      <img
+                        src={imagePreviews[idx]!}
+                        alt={file.name}
+                        className="w-9 h-9 rounded-lg object-cover border border-[#D9C9B5]/70 shrink-0"
+                      />
+                    ) : file.type.startsWith('image/') ? (
+                      <ImageIcon size={16} className="text-[#556952] shrink-0" />
+                    ) : (
+                      <FileText size={16} className="text-[#556952] shrink-0" />
+                    )}
+                    <span className="text-sm text-[#454943] truncate">{file.name}</span>
+                    {isDup && (
+                      <DuplicateContentBadge
+                        compact
+                        title={
+                          existingMatchTitle
+                            ? `مطابق في محتواه الداخلي للملف المحفوظ: ${existingMatchTitle}`
+                            : 'مكرر في محتواه الداخلي ضمن نفس القائمة المختارة'
+                        }
+                      />
+                    )}
+                    <span className="text-xs text-[#666560] font-mono-num shrink-0">
+                      {formatBytesArabic(file.size)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
+                    className="text-[#85847E] hover:text-[#8A5E56] p-1 shrink-0"
+                    aria-label="إزالة الملف من القائمة"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {/* Description */}
+        <div>
+          <label className="block text-xs font-medium text-[#454943] mb-1.5">
+            اسم الملف أو العنوان المطلوب (اختياري — يؤخذ من اسم الملف تلقائياً)
+          </label>
+          <input
+            type="text"
+            value={customTitle}
+            onChange={(e) => setCustomTitle(e.target.value)}
+            placeholder="مثال: شهادة برنامج التعلم النشط أو صورة النشاط"
+            className="w-full px-3.5 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943] placeholder:text-[#85847E]"
+          />
+        </div>
+
         <div>
           <label className="block text-xs font-medium text-[#454943] mb-1.5">
             وصف وملاحظات المرفق (اختياري)
@@ -349,7 +428,7 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="أضيفي أي تفاصيل أو ملاحظات نصية ترافق الملف أو الصورة..."
-            className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943] placeholder:text-[#85847E]"
+            className="w-full px-3.5 py-2 text-sm bg-white border border-[#D9C9B5] rounded-xl text-[#454943] placeholder:text-[#85847E]"
           />
         </div>
 
@@ -372,3 +451,4 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
     </Modal>
   );
 };
+

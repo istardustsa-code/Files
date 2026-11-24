@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { LogIn, UserPlus, KeyRound, Database, Eye, Ticket } from 'lucide-react';
 import { LogoMark } from '../common/LogoMark';
 import { SupabaseSetupModal } from './SupabaseSetupModal';
@@ -64,6 +64,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
+
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
+  const fullNameInputRef = useRef<HTMLInputElement | null>(null);
+  const visitCodeInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (mode === 'visit') {
+        visitCodeInputRef.current?.focus();
+      } else if (mode === 'signup') {
+        fullNameInputRef.current?.focus();
+      } else {
+        emailInputRef.current?.focus();
+      }
+    }, 30);
+    return () => window.clearTimeout(timer);
+  }, [mode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -247,6 +264,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
                   كود الزيارة المؤقتة
                 </label>
                 <input
+                  ref={visitCodeInputRef}
                   type="text"
                   required
                   dir="ltr"
@@ -254,7 +272,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
                   autoCorrect="off"
                   spellCheck={false}
                   value={visitCode}
-                  onChange={(e) => setVisitCode(e.target.value.toUpperCase())}
+                  onChange={(e) => setVisitCode(e.target.value.replace(/\s+/g, '').toUpperCase())}
                   placeholder="VST-XXXXXX"
                   className="w-full px-3.5 py-2.5 text-sm font-mono-num tracking-wider bg-white border border-[#D9C9B5] rounded-xl text-left uppercase"
                 />
@@ -281,6 +299,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
                       الاسم الكامل
                     </label>
                     <input
+                      ref={fullNameInputRef}
                       type="text"
                       required
                       value={fullName}
@@ -326,6 +345,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onEnterPreviewMode }) =>
                   البريد الإلكتروني
                 </label>
                 <input
+                  ref={emailInputRef}
                   type="email"
                   inputMode="email"
                   autoComplete="email"

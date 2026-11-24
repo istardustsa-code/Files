@@ -13,10 +13,16 @@ import {
   CheckSquare,
   Square,
   X,
+  Copy,
 } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
 import type { FileTypeCategory, PortfolioFile } from '../../../types/platform';
-import { FileTypeIconBox, FileTypeInlineText, ReviewStatusInline } from '../../common/FileTypeIndicator';
+import {
+  DuplicateContentBadge,
+  FileTypeIconBox,
+  FileTypeInlineText,
+  ReviewStatusInline,
+} from '../../common/FileTypeIndicator';
 import { UploadFileModal } from '../../common/UploadFileModal';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
@@ -49,12 +55,16 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
     permanentlyDeleteFile,
     batchPermanentlyDeleteFiles,
     batchMoveFilesToSection,
+    duplicateFileIds,
+    duplicatePeersByFileId,
+    uploadProgress,
   } = usePlatform();
 
   const [tab, setTab] = useState<'active' | 'trash'>('active');
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [sectionFilter, setSectionFilter] = useState<string>(initialSectionFilter);
   const [typeFilter, setTypeFilter] = useState<FileTypeCategory | 'all'>('all');
+  const [onlyDuplicates, setOnlyDuplicates] = useState(false);
   const [localSearch, setLocalSearch] = useState('');
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -74,6 +84,7 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
       .filter((f) => (tab === 'trash' ? f.isDeleted : !f.isDeleted))
       .filter((f) => (sectionFilter === 'all' ? true : f.sectionId === sectionFilter))
       .filter((f) => (typeFilter === 'all' ? true : f.fileType === typeFilter))
+      .filter((f) => (tab === 'active' && onlyDuplicates ? duplicateFileIds.has(f.id) : true))
       .filter((f) => {
         if (!effectiveSearch) return true;
         const ownerName = users.find((u) => u.id === f.ownerId)?.fullName ?? '';
@@ -86,7 +97,17 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
           sectionLabel.toLowerCase().includes(effectiveSearch)
         );
       });
-  }, [visibleFiles, visibleSections, tab, sectionFilter, typeFilter, effectiveSearch, users]);
+  }, [
+    visibleFiles,
+    visibleSections,
+    tab,
+    sectionFilter,
+    typeFilter,
+    onlyDuplicates,
+    duplicateFileIds,
+    effectiveSearch,
+    users,
+  ]);
 
   const selectableFiles = useMemo(
     () =>
@@ -213,6 +234,21 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {tab === 'active' && duplicateFileIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setOnlyDuplicates((v) => !v)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-xl border transition-colors whitespace-nowrap ${
+                  onlyDuplicates
+                    ? 'bg-[#D8BDB7]/40 border-[#8A5E56] text-[#7B4B43]'
+                    : 'bg-white border-[#D9C9B5] text-[#7B4B43] hover:bg-[#D8BDB7]/20'
+                }`}
+              >
+                <Copy size={14} />
+                <span>مكرر المحتوى ({duplicateFileIds.size})</span>
+              </button>
+            )}
+
             {selectableFiles.length > 0 && (
               <button
                 type="button"
@@ -307,6 +343,14 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
             <option value="image">الصور</option>
           </select>
         </div>
+        {uploadProgress?.active && (
+          <div className="px-3.5 py-2 rounded-xl bg-[#A8B9A5]/18 border border-[#A8B9A5]/50 text-xs text-[#3F573C] flex items-center justify-between gap-3">
+            <span>جاري الرفع السريع للملفات...</span>
+            <span className="font-mono-num font-semibold">
+              {uploadProgress.completed} / {uploadProgress.total}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Multi-Select Batch Action Toolbar */}
@@ -433,13 +477,32 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
                         <div className="flex items-center gap-3 min-w-[220px]">
                           <FileTypeIconBox fileType={file.fileType} size="sm" />
                           <div className="min-w-0">
-                            <button
-                              type="button"
-                              onClick={() => setPreviewFile(file)}
-                              className="font-medium text-[#454943] hover:text-[#556952] text-right truncate block max-w-xs"
-                            >
-                              {file.title}
-                            </button>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewFile(file)}
+                                className="font-medium text-[#454943] hover:text-[#556952] text-right truncate block max-w-xs"
+                              >
+                                {file.title}
+                              </button>
+                              {duplicateFileIds.has(file.id) && (() => {
+                                const peers = duplicatePeersByFileId.get(file.id) ?? [];
+                                const peerNames = peers
+                                  .slice(0, 2)
+                                  .map((p) => `${p.title} (${getSectionLabel(p)})`)
+                                  .join('، ');
+                                return (
+                                  <DuplicateContentBadge
+                                    compact
+                                    title={
+                                      peerNames
+                                        ? `مطابق في محتواه الداخلي لـ: ${peerNames}`
+                                        : 'محتوى الملف الداخلي مكرر ومطابق لملف آخر'
+                                    }
+                                  />
+                                );
+                              })()}
+                            </div>
                             <p className="text-xs text-[#666560] truncate max-w-xs">
                               {file.originalFileName}
                             </p>
@@ -553,13 +616,32 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
                   </div>
 
                   <div>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewFile(file)}
-                      className="text-base font-semibold text-[#454943] hover:text-[#556952] text-right line-clamp-1"
-                    >
-                      {file.title}
-                    </button>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewFile(file)}
+                        className="text-base font-semibold text-[#454943] hover:text-[#556952] text-right line-clamp-1"
+                      >
+                        {file.title}
+                      </button>
+                      {duplicateFileIds.has(file.id) && (() => {
+                        const peers = duplicatePeersByFileId.get(file.id) ?? [];
+                        const peerNames = peers
+                          .slice(0, 2)
+                          .map((p) => `${p.title} (${getSectionLabel(p)})`)
+                          .join('، ');
+                        return (
+                          <DuplicateContentBadge
+                            compact
+                            title={
+                              peerNames
+                                ? `مطابق في محتواه الداخلي لـ: ${peerNames}`
+                                : 'محتوى الملف الداخلي مكرر ومطابق لملف آخر'
+                            }
+                          />
+                        );
+                      })()}
+                    </div>
                     <p className="text-xs text-[#666560] mt-1 line-clamp-2 leading-relaxed">
                       {file.description || file.originalFileName}
                     </p>

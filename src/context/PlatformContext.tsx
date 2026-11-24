@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   DEFAULT_BRANDING,
@@ -44,6 +44,11 @@ import {
   prepareFileForPortfolioUpload,
   SUPABASE_SAFE_SINGLE_OBJECT_BYTES,
 } from '../utils/pdfLargeFile';
+import {
+  computeFileContentHash,
+  findContentDuplicateInfo,
+  getFileContentHashKey,
+} from '../utils/fileHash';
 
 export interface ToastMessage {
   id: string;
@@ -82,6 +87,9 @@ interface PlatformContextValue {
   setManagerNav: (nav: ManagerNavId) => void;
   teacherNav: TeacherNavId;
   setTeacherNav: (nav: TeacherNavId) => void;
+  focusedSectionId: string | null;
+  setFocusedSectionId: (sectionId: string | null) => void;
+  openTeacherSection: (sectionId: string) => void;
   globalSearch: string;
   setGlobalSearch: (q: string) => void;
 
@@ -104,7 +112,13 @@ interface PlatformContextValue {
   permissions: Record<UserRole, RolePermissionSet>;
   settings: PlatformSettings;
 
+  // Duplicate Internal Content Detection
+  duplicateFileIds: Set<string>;
+  duplicatePeersByFileId: Map<string, PortfolioFile[]>;
+  duplicateLogicalGroupsCount: number;
+
   // File operations
+  uploadProgress: { active: boolean; completed: number; total: number } | null;
   uploadFiles: (items: UploadFileInput[]) => Promise<void>;
   getSignedFileUrl: (file: PortfolioFile) => Promise<string | null>;
   renameAndUpdateFile: (
@@ -234,8 +248,21 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [adminNav, setAdminNav] = useState<SuperAdminNavId>('overview');
   const [managerNav, setManagerNav] = useState<ManagerNavId>('overview');
   const [teacherNav, setTeacherNav] = useState<TeacherNavId>('overview');
+  const [focusedSectionId, setFocusedSectionId] = useState<string | null>(null);
   const [globalSearch, setGlobalSearch] = useState('');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{
+    active: boolean;
+    completed: number;
+    total: number;
+  } | null>(null);
+  const [runtimeFileHashes, setRuntimeFileHashes] = useState<Record<string, string>>({});
+  const hashScanAttemptedRef = useRef<Set<string>>(new Set());
+
+  const openTeacherSection = useCallback((sectionId: string) => {
+    setFocusedSectionId(sectionId);
+    setTeacherNav('my_portfolio');
+  }, []);
 
   // Temporary Visit Codes & Guest Read-Only Session State
   const [myVisitCode, setMyVisitCode] = useState<TeacherVisitCode | null>(null);
@@ -594,19 +621,119 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [visibleNotifications]
   );
 
+  const duplicateInfo = useMemo(
+    () => findContentDuplicateInfo(visibleFiles, runtimeFileHashes),
+    [visibleFiles, runtimeFileHashes]
+  );
+
+  // Lazily verify SHA-256 internal content hash for older files that share an exact byte size
+  useEffect(() => {
+    const activeOwned = files.filter((f) => !f.isDeleted && f.ownerId === currentUser.id);
+    if (activeOwned.length < 2) return;
+
+    const sizeBuckets = new Map<number, PortfolioFile[]>();
+    for (const f of activeOwned) {
+      if (f.sizeBytes <= 0) continue;
+      const list = sizeBuckets.get(f.sizeBytes);
+      if (list) list.push(f);
+      else sizeBuckets.set(f.sizeBytes, [f]);
+    }
+
+    const candidates: PortfolioFile[] = [];
+    sizeBuckets.forEach((group) => {
+      if (group.length < 2) return;
+      for (const f of group) {
+        const existingHash = getFileContentHashKey(f, runtimeFileHashes);
+        if (!existingHash && !hashScanAttemptedRef.current.has(f.id)) {
+          candidates.push(f);
+        }
+      }
+    });
+
+    if (candidates.length === 0) return;
+
+    let cancelled = false;
+    const scanBatch = async () => {
+      for (const target of candidates.slice(0, 8)) {
+        if (cancelled) break;
+        hashScanAttemptedRef.current.add(target.id);
+        try {
+          const url =
+            target.localPreviewUrl ||
+            (isSupabaseLive ? await SupabaseBackend.getSignedFileUrl(target.storagePath) : null);
+          if (!url || cancelled) continue;
+          const res = await fetch(url);
+          if (!res.ok || cancelled) continue;
+          const buf = await res.arrayBuffer();
+          const hash = await computeFileContentHash(buf);
+          if (cancelled) break;
+
+          setRuntimeFileHashes((prev) => ({ ...prev, [target.id]: hash }));
+          if (isSupabaseLive && target.ownerId === currentUser.id) {
+            const nextValues = {
+              ...(target.customFieldValues ?? {}),
+              _contentHash: hash,
+            };
+            await SupabaseBackend.updateFileMetadata(target.id, {
+              customFieldValues: nextValues,
+            })
+              .then((updated) => {
+                if (!cancelled) {
+                  setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
+                }
+              })
+              .catch(() => undefined);
+          }
+        } catch {
+          // Ignore transient network failures during background duplicate verification
+        }
+      }
+    };
+
+    void scanBatch();
+    return () => {
+      cancelled = true;
+    };
+  }, [files, currentUser.id, isSupabaseLive, runtimeFileHashes]);
+
   // --------------------------------------------------------------------------
-  // File Operations
+  // File Operations (Parallelized + Content Hashing)
   // --------------------------------------------------------------------------
   const uploadFiles = async (items: UploadFileInput[]) => {
+    if (items.length === 0) return;
     const hasLargeItem = items.some((i) => i.file.size > 15 * 1024 * 1024);
     if (hasLargeItem) {
       pushToast('جاري تجهيز ورفع الملف الكبير... يرجى الانتظار قليلاً', 'info');
     }
 
+    // Compute exact SHA-256 content hashes in parallel before splitting/uploading
+    const originalHashes = await Promise.all(
+      items.map((item) => computeFileContentHash(item.file).catch(() => ''))
+    );
+
+    const existingHashes = new Set<string>();
+    files.forEach((f) => {
+      if (f.isDeleted || f.ownerId !== currentUser.id) return;
+      const h = getFileContentHashKey(f, runtimeFileHashes);
+      if (h) existingHashes.add(h);
+    });
+
+    const duplicateDetectedHashes = new Set<string>();
+    const seenBatchHashes = new Set<string>();
+    originalHashes.forEach((h) => {
+      if (!h) return;
+      if (existingHashes.has(h) || seenBatchHashes.has(h)) {
+        duplicateDetectedHashes.add(h);
+      }
+      seenBatchHashes.add(h);
+    });
+
     const preparedItems: UploadFileInput[] = [];
     let splitPerformed = false;
 
-    for (const item of items) {
+    for (let idx = 0; idx < items.length; idx += 1) {
+      const item = items[idx];
+      const origHash = originalHashes[idx];
       const prepared = await prepareFileForPortfolioUpload(
         item.file,
         SUPABASE_SAFE_SINGLE_OBJECT_BYTES
@@ -624,28 +751,51 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               ...(item.customFieldValues ?? {}),
               _bundleId: sharedBundleId,
               ...(prepared.totalPages ? { _totalPages: String(prepared.totalPages) } : {}),
+              ...(origHash ? { _originalContentHash: origHash } : {}),
             },
           });
         });
       } else {
-        preparedItems.push(item);
+        preparedItems.push({
+          ...item,
+          customFieldValues: {
+            ...(item.customFieldValues ?? {}),
+            ...(origHash ? { _contentHash: origHash } : {}),
+          },
+        });
       }
     }
 
     if (isSupabaseLive) {
+      const totalCount = preparedItems.length;
+      setUploadProgress({ active: true, completed: 0, total: totalCount });
       try {
-        const uploaded: PortfolioFile[] = [];
-        for (const item of preparedItems) {
-          const saved = await SupabaseBackend.uploadPrivateFile({
-            ownerId: currentUser.id,
-            sectionId: item.sectionId,
-            file: item.file,
-            title: item.title,
-            description: item.description,
-            customFieldValues: item.customFieldValues,
-          });
-          uploaded.push(saved);
-        }
+        const uploadedResults: (PortfolioFile | null)[] = new Array(totalCount).fill(null);
+        let cursor = 0;
+        let completedCount = 0;
+        const concurrency = Math.min(4, totalCount);
+
+        const worker = async () => {
+          while (cursor < totalCount) {
+            const currentIdx = cursor;
+            cursor += 1;
+            const item = preparedItems[currentIdx];
+            const saved = await SupabaseBackend.uploadPrivateFile({
+              ownerId: currentUser.id,
+              sectionId: item.sectionId,
+              file: item.file,
+              title: item.title,
+              description: item.description,
+              customFieldValues: item.customFieldValues,
+            });
+            uploadedResults[currentIdx] = saved;
+            completedCount += 1;
+            setUploadProgress({ active: true, completed: completedCount, total: totalCount });
+          }
+        };
+
+        await Promise.all(Array.from({ length: concurrency }, () => worker()));
+        const uploaded = uploadedResults.filter((f): f is PortfolioFile => Boolean(f));
 
         setFiles((prev) => [...uploaded, ...prev]);
         await recordActivity(
@@ -655,13 +805,20 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             : `تم رفع ${uploaded.length} ملفات جديدة`,
           uploaded[0]?.title
         );
-        pushToast(
-          splitPerformed
-            ? `تم تجهيز ورفع الملف الكبير كاملاً (${uploaded.length} أجزاء داخل عنصر واحد)`
-            : uploaded.length === 1
-              ? 'تم رفع الملف في التخزين الخاص'
-              : `تم رفع ${uploaded.length} ملفات بنجاح`
-        );
+        if (duplicateDetectedHashes.size > 0) {
+          pushToast(
+            `تم الرفع بنجاح، مع تنبيه بوجود (${duplicateDetectedHashes.size}) ملف مطابق في محتواه الداخلي لملف آخر (تم تمييزه بعلامة التكرار)`,
+            'warning'
+          );
+        } else {
+          pushToast(
+            splitPerformed
+              ? `تم تجهيز ورفع الملف الكبير كاملاً (${uploaded.length} أجزاء داخل عنصر واحد)`
+              : uploaded.length === 1
+                ? 'تم رفع الملف في التخزين الخاص'
+                : `تم رفع ${uploaded.length} ملفات بنجاح`
+          );
+        }
       } catch (err) {
         const rawMsg = err instanceof Error ? err.message : 'فشل رفع الملف';
         const lower = rawMsg.toLowerCase();
@@ -673,6 +830,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         } else {
           pushToast(rawMsg, 'warning');
         }
+      } finally {
+        setUploadProgress(null);
       }
       return;
     }
@@ -698,13 +857,20 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }));
     setFiles((prev) => [...created, ...prev]);
     await recordActivity('file_upload', `تم رفع ملف (${created[0]?.title ?? ''})`, created[0]?.title);
-    pushToast(
-      splitPerformed
-        ? `تم تجهيز ورفع الملف الكبير كاملاً (${created.length} أجزاء داخل عنصر واحد)`
-        : created.length === 1
-          ? 'تم رفع الملف بنجاح'
-          : `تم رفع ${created.length} ملفات بنجاح`
-    );
+    if (duplicateDetectedHashes.size > 0) {
+      pushToast(
+        `تم الحفظ، مع تنبيه بوجود ملف مطابق في محتواه الداخلي لملف آخر (تم تمييزه بعلامة التكرار)`,
+        'warning'
+      );
+    } else {
+      pushToast(
+        splitPerformed
+          ? `تم تجهيز ورفع الملف الكبير كاملاً (${created.length} أجزاء داخل عنصر واحد)`
+          : created.length === 1
+            ? 'تم رفع الملف بنجاح'
+            : `تم رفع ${created.length} ملفات بنجاح`
+      );
+    }
   };
 
   const getSignedFileUrl = async (file: PortfolioFile): Promise<string | null> => {
@@ -783,9 +949,20 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const existing = files.find((f) => f.id === fileId);
     if (!existing) return;
 
+    const nextHash = await computeFileContentHash(newFile).catch(() => '');
+    const nextCustomValues: Record<string, string> = {
+      ...(existing.customFieldValues ?? {}),
+    };
+    delete nextCustomValues._originalContentHash;
+    if (nextHash) nextCustomValues._contentHash = nextHash;
+
     if (isSupabaseLive) {
       try {
-        const updated = await SupabaseBackend.replacePrivateFile(existing, newFile);
+        const updated = await SupabaseBackend.replacePrivateFile(
+          existing,
+          newFile,
+          nextCustomValues
+        );
         setFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
         await recordActivity('file_update', 'تم استبدال الملف بنسخة جديدة', newFile.name);
         pushToast('تم استبدال الملف في التخزين الخاص');
@@ -806,6 +983,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               fileType,
               mimeType: newFile.type || f.mimeType,
               sizeBytes: newFile.size,
+              customFieldValues: nextCustomValues,
               localPreviewUrl: previewUrl,
               updatedAt: new Date().toISOString(),
             }
@@ -2224,6 +2402,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setManagerNav,
         teacherNav,
         setTeacherNav,
+        focusedSectionId,
+        setFocusedSectionId,
+        openTeacherSection,
         globalSearch,
         setGlobalSearch,
         users,
@@ -2243,6 +2424,10 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         branding,
         permissions,
         settings,
+        duplicateFileIds: duplicateInfo.duplicateFileIds,
+        duplicatePeersByFileId: duplicateInfo.duplicatePeersByFileId,
+        duplicateLogicalGroupsCount: duplicateInfo.duplicateLogicalGroupsCount,
+        uploadProgress,
         uploadFiles,
         getSignedFileUrl,
         renameAndUpdateFile,

@@ -416,7 +416,11 @@ export const SupabaseBackend = {
     return mapFileRow(data);
   },
 
-  async replacePrivateFile(existing: PortfolioFile, newFile: File): Promise<PortfolioFile> {
+  async replacePrivateFile(
+    existing: PortfolioFile,
+    newFile: File,
+    customFieldValues?: Record<string, string>
+  ): Promise<PortfolioFile> {
     const client = requireClient();
     const fileType = detectFileCategory(newFile.name, newFile.type);
     const safeName = sanitizeFilename(newFile.name);
@@ -437,6 +441,7 @@ export const SupabaseBackend = {
         mime_type: newFile.type || existing.mimeType,
         size_bytes: newFile.size,
         storage_path: newPath,
+        ...(customFieldValues ? { custom_field_values: customFieldValues } : {}),
       })
       .eq('id', existing.id)
       .select()
