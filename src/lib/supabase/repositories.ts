@@ -379,6 +379,163 @@ export const SupabaseBackend = {
     return mapFileRow(data);
   },
 
+  async uploadPrivateFilesBatch(
+    inputs: {
+      ownerId: string;
+      sectionId: string;
+      file: File;
+      title: string;
+      description: string;
+      customFieldValues?: Record<string, string>;
+    }[],
+    options?: {
+      onProgress?: (completed: number, total: number) => void;
+      onChunkSaved?: (savedChunk: PortfolioFile[]) => void;
+    }
+  ): Promise<PortfolioFile[]> {
+    const client = requireClient();
+    const total = inputs.length;
+    if (total === 0) return [];
+
+    const hasLargeFiles = inputs.some((i) => i.file.size > 10 * 1024 * 1024);
+    const concurrency = Math.min(hasLargeFiles ? 4 : 8, total);
+    const dbChunkSize = 15;
+
+    type PreparedRow = {
+      index: number;
+      storagePath: string;
+      dbRow: {
+        title: string;
+        original_file_name: string;
+        description: string;
+        section_id: string;
+        owner_id: string;
+        file_type: string;
+        mime_type: string;
+        size_bytes: number;
+        storage_path: string;
+        custom_field_values: Record<string, string>;
+      };
+    };
+
+    const pendingInsertBuffer: PreparedRow[] = [];
+    const savedByIndex: (PortfolioFile | null)[] = new Array(total).fill(null);
+    let cursor = 0;
+    let completedStorage = 0;
+    let flushingPromise: Promise<void> | null = null;
+
+    const flushBuffer = async (forceAll: boolean) => {
+      if (pendingInsertBuffer.length === 0) return;
+      if (!forceAll && pendingInsertBuffer.length < dbChunkSize) return;
+
+      const chunk = pendingInsertBuffer.splice(0, dbChunkSize);
+      const { data, error } = await client
+        .from('portfolio_files')
+        .insert(chunk.map((c) => c.dbRow))
+        .select();
+
+      if (error || !data) {
+        const pathsToRemove = [
+          ...chunk.map((c) => c.storagePath),
+          ...pendingInsertBuffer.map((c) => c.storagePath),
+        ];
+        if (pathsToRemove.length > 0) {
+          await client.storage.from(PRIVATE_FILES_BUCKET).remove(pathsToRemove).catch(() => undefined);
+        }
+        throw error ?? new Error('فشل حفظ بيانات الملفات في قاعدة البيانات');
+      }
+
+      const mapped = (data as SupabasePortfolioFileRow[]).map(mapFileRow);
+      chunk.forEach((entry, idx) => {
+        if (mapped[idx]) {
+          savedByIndex[entry.index] = mapped[idx];
+        }
+      });
+      options?.onChunkSaved?.(mapped);
+    };
+
+    const scheduleFlush = async (forceAll = false) => {
+      while (flushingPromise) {
+        await flushingPromise;
+      }
+      if (pendingInsertBuffer.length === 0) return;
+      if (!forceAll && pendingInsertBuffer.length < dbChunkSize) return;
+      flushingPromise = (async () => {
+        while (
+          pendingInsertBuffer.length >= dbChunkSize ||
+          (forceAll && pendingInsertBuffer.length > 0)
+        ) {
+          await flushBuffer(forceAll);
+        }
+      })();
+      try {
+        await flushingPromise;
+      } finally {
+        flushingPromise = null;
+      }
+    };
+
+    const worker = async () => {
+      while (cursor < total) {
+        const currentIndex = cursor;
+        cursor += 1;
+        const item = inputs[currentIndex];
+        const fileType = detectFileCategory(item.file.name, item.file.type);
+        const safeName = sanitizeFilename(item.file.name);
+        const storagePath = `${item.ownerId}/${item.sectionId}/${crypto.randomUUID()}_${safeName}`;
+
+        const { error: uploadError } = await client.storage
+          .from(PRIVATE_FILES_BUCKET)
+          .upload(storagePath, item.file, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: item.file.type || 'application/octet-stream',
+          });
+
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        pendingInsertBuffer.push({
+          index: currentIndex,
+          storagePath,
+          dbRow: {
+            title: item.title.trim() || item.file.name.replace(/\.[^/.]+$/, ''),
+            original_file_name: item.file.name,
+            description: item.description.trim(),
+            section_id: item.sectionId,
+            owner_id: item.ownerId,
+            file_type: fileType,
+            mime_type: item.file.type || 'application/octet-stream',
+            size_bytes: item.file.size,
+            storage_path: storagePath,
+            custom_field_values: item.customFieldValues ?? {},
+          },
+        });
+
+        completedStorage += 1;
+        options?.onProgress?.(completedStorage, total);
+
+        if (pendingInsertBuffer.length >= dbChunkSize) {
+          await scheduleFlush(false);
+        }
+      }
+    };
+
+    try {
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
+      await scheduleFlush(true);
+    } catch (err) {
+      if (pendingInsertBuffer.length > 0) {
+        const leftoverPaths = pendingInsertBuffer.splice(0).map((c) => c.storagePath);
+        await client.storage.from(PRIVATE_FILES_BUCKET).remove(leftoverPaths).catch(() => undefined);
+      }
+      throw err;
+    }
+
+    return savedByIndex.filter((f): f is PortfolioFile => Boolean(f));
+  },
+
   async getSignedFileUrl(storagePath: string, expiresInSeconds = 3600): Promise<string> {
     const client = requireClient();
     const { data, error } = await client.storage
@@ -466,6 +623,16 @@ export const SupabaseBackend = {
     if (error) throw error;
   },
 
+  async batchSoftDeleteFiles(fileIds: string[]): Promise<void> {
+    if (fileIds.length === 0) return;
+    const client = requireClient();
+    const { error } = await client
+      .from('portfolio_files')
+      .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+      .in('id', fileIds);
+    if (error) throw error;
+  },
+
   async restoreFile(fileId: string): Promise<void> {
     const client = requireClient();
     const { error } = await client
@@ -475,11 +642,33 @@ export const SupabaseBackend = {
     if (error) throw error;
   },
 
+  async batchRestoreFiles(fileIds: string[]): Promise<void> {
+    if (fileIds.length === 0) return;
+    const client = requireClient();
+    const { error } = await client
+      .from('portfolio_files')
+      .update({ is_deleted: false, deleted_at: null })
+      .in('id', fileIds);
+    if (error) throw error;
+  },
+
   async permanentlyDeleteFile(file: PortfolioFile): Promise<void> {
     const client = requireClient();
     const { error: dbError } = await client.from('portfolio_files').delete().eq('id', file.id);
     if (dbError) throw dbError;
     await client.storage.from(PRIVATE_FILES_BUCKET).remove([file.storagePath]);
+  },
+
+  async batchPermanentlyDeleteFiles(filesToDelete: PortfolioFile[]): Promise<void> {
+    if (filesToDelete.length === 0) return;
+    const client = requireClient();
+    const ids = filesToDelete.map((f) => f.id);
+    const paths = filesToDelete.map((f) => f.storagePath).filter(Boolean);
+    const { error: dbError } = await client.from('portfolio_files').delete().in('id', ids);
+    if (dbError) throw dbError;
+    if (paths.length > 0) {
+      await client.storage.from(PRIVATE_FILES_BUCKET).remove(paths);
+    }
   },
 
   async reviewFile(

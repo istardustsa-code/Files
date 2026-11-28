@@ -13,12 +13,10 @@ import {
   CheckSquare,
   Square,
   X,
-  Copy,
 } from 'lucide-react';
 import { usePlatform } from '../../../context/PlatformContext';
 import type { FileTypeCategory, PortfolioFile } from '../../../types/platform';
 import {
-  DuplicateContentBadge,
   FileTypeIconBox,
   FileTypeInlineText,
   ReviewStatusInline,
@@ -55,8 +53,6 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
     permanentlyDeleteFile,
     batchPermanentlyDeleteFiles,
     batchMoveFilesToSection,
-    duplicateFileIds,
-    duplicatePeersByFileId,
     uploadProgress,
   } = usePlatform();
 
@@ -64,7 +60,6 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [sectionFilter, setSectionFilter] = useState<string>(initialSectionFilter);
   const [typeFilter, setTypeFilter] = useState<FileTypeCategory | 'all'>('all');
-  const [onlyDuplicates, setOnlyDuplicates] = useState(false);
   const [localSearch, setLocalSearch] = useState('');
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -79,15 +74,20 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
 
   const effectiveSearch = (localSearch || globalSearch).trim().toLowerCase();
 
+  const ownerNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    users.forEach((u) => map.set(u.id, u.fullName));
+    return map;
+  }, [users]);
+
   const filteredFiles = useMemo(() => {
     return visibleFiles
       .filter((f) => (tab === 'trash' ? f.isDeleted : !f.isDeleted))
       .filter((f) => (sectionFilter === 'all' ? true : f.sectionId === sectionFilter))
       .filter((f) => (typeFilter === 'all' ? true : f.fileType === typeFilter))
-      .filter((f) => (tab === 'active' && onlyDuplicates ? duplicateFileIds.has(f.id) : true))
       .filter((f) => {
         if (!effectiveSearch) return true;
-        const ownerName = users.find((u) => u.id === f.ownerId)?.fullName ?? '';
+        const ownerName = ownerNameById.get(f.ownerId) ?? '';
         const sectionLabel = getSectionBreadcrumbLabel(visibleSections, f);
         return (
           f.title.toLowerCase().includes(effectiveSearch) ||
@@ -103,10 +103,8 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
     tab,
     sectionFilter,
     typeFilter,
-    onlyDuplicates,
-    duplicateFileIds,
     effectiveSearch,
-    users,
+    ownerNameById,
   ]);
 
   const selectableFiles = useMemo(
@@ -131,13 +129,19 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
     });
   }, [selectableFiles]);
 
-  const activeCount = visibleFiles.filter((f) => !f.isDeleted).length;
-  const trashCount = visibleFiles.filter((f) => f.isDeleted).length;
+  const { activeCount, trashCount } = useMemo(() => {
+    let active = 0;
+    let trash = 0;
+    for (const f of visibleFiles) {
+      if (f.isDeleted) trash += 1;
+      else active += 1;
+    }
+    return { activeCount: active, trashCount: trash };
+  }, [visibleFiles]);
 
   const getSectionLabel = (file: PortfolioFile) =>
     getSectionBreadcrumbLabel(visibleSections, file);
-  const getOwnerName = (ownerId: string) =>
-    users.find((u) => u.id === ownerId)?.fullName ?? '—';
+  const getOwnerName = (ownerId: string) => ownerNameById.get(ownerId) ?? '—';
 
   const allSelected =
     selectableFiles.length > 0 &&
@@ -234,21 +238,6 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {tab === 'active' && duplicateFileIds.size > 0 && (
-              <button
-                type="button"
-                onClick={() => setOnlyDuplicates((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-xl border transition-colors whitespace-nowrap ${
-                  onlyDuplicates
-                    ? 'bg-[#D8BDB7]/40 border-[#8A5E56] text-[#7B4B43]'
-                    : 'bg-white border-[#D9C9B5] text-[#7B4B43] hover:bg-[#D8BDB7]/20'
-                }`}
-              >
-                <Copy size={14} />
-                <span>مكرر المحتوى ({duplicateFileIds.size})</span>
-              </button>
-            )}
-
             {selectableFiles.length > 0 && (
               <button
                 type="button"
@@ -477,32 +466,13 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
                         <div className="flex items-center gap-3 min-w-[220px]">
                           <FileTypeIconBox fileType={file.fileType} size="sm" />
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <button
-                                type="button"
-                                onClick={() => setPreviewFile(file)}
-                                className="font-medium text-[#454943] hover:text-[#556952] text-right truncate block max-w-xs"
-                              >
-                                {file.title}
-                              </button>
-                              {duplicateFileIds.has(file.id) && (() => {
-                                const peers = duplicatePeersByFileId.get(file.id) ?? [];
-                                const peerNames = peers
-                                  .slice(0, 2)
-                                  .map((p) => `${p.title} (${getSectionLabel(p)})`)
-                                  .join('، ');
-                                return (
-                                  <DuplicateContentBadge
-                                    compact
-                                    title={
-                                      peerNames
-                                        ? `مطابق في محتواه الداخلي لـ: ${peerNames}`
-                                        : 'محتوى الملف الداخلي مكرر ومطابق لملف آخر'
-                                    }
-                                  />
-                                );
-                              })()}
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPreviewFile(file)}
+                              className="font-medium text-[#454943] hover:text-[#556952] text-right truncate block max-w-xs"
+                            >
+                              {file.title}
+                            </button>
                             <p className="text-xs text-[#666560] truncate max-w-xs">
                               {file.originalFileName}
                             </p>
@@ -616,32 +586,13 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPreviewFile(file)}
-                        className="text-base font-semibold text-[#454943] hover:text-[#556952] text-right line-clamp-1"
-                      >
-                        {file.title}
-                      </button>
-                      {duplicateFileIds.has(file.id) && (() => {
-                        const peers = duplicatePeersByFileId.get(file.id) ?? [];
-                        const peerNames = peers
-                          .slice(0, 2)
-                          .map((p) => `${p.title} (${getSectionLabel(p)})`)
-                          .join('، ');
-                        return (
-                          <DuplicateContentBadge
-                            compact
-                            title={
-                              peerNames
-                                ? `مطابق في محتواه الداخلي لـ: ${peerNames}`
-                                : 'محتوى الملف الداخلي مكرر ومطابق لملف آخر'
-                            }
-                          />
-                        );
-                      })()}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewFile(file)}
+                      className="text-base font-semibold text-[#454943] hover:text-[#556952] text-right line-clamp-1"
+                    >
+                      {file.title}
+                    </button>
                     <p className="text-xs text-[#666560] mt-1 line-clamp-2 leading-relaxed">
                       {file.description || file.originalFileName}
                     </p>
@@ -783,29 +734,37 @@ export const FileManagementView: React.FC<FileManagementViewProps> = ({
         </form>
       </Modal>
 
-      <UploadFileModal isOpen={uploadOpen} onClose={() => setUploadOpen(false)} />
-      <FilePreviewModal
-        file={visibleFiles.find((f) => f.id === previewFile?.id) ?? null}
-        onClose={() => setPreviewFile(null)}
-      />
-      <ConfirmDialog
-        isOpen={Boolean(deleteTarget)}
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={() => {
-          if (deleteTarget) permanentlyDeleteFile(deleteTarget.id);
-        }}
-        title="تأكيد الحذف النهائي"
-        description={`هل أنت متأكد من الحذف النهائي لملف "${deleteTarget?.title}"؟ لا يمكن التراجع عن هذا الإجراء.`}
-        confirmLabel="حذف نهائياً"
-      />
-      <ConfirmDialog
-        isOpen={batchDeleteConfirmOpen}
-        onClose={() => setBatchDeleteConfirmOpen(false)}
-        onConfirm={() => void handleConfirmBatchPermanentDelete()}
-        title="تأكيد الحذف النهائي للملفات المحددة"
-        description={`هل أنت متأكد من الحذف النهائي لـ ${selectedIds.size} ملفات محددة؟ لا يمكن التراجع عن هذا الإجراء.`}
-        confirmLabel="حذف نهائياً"
-      />
+      {uploadOpen && (
+        <UploadFileModal isOpen={uploadOpen} onClose={() => setUploadOpen(false)} />
+      )}
+      {previewFile && (
+        <FilePreviewModal
+          file={visibleFiles.find((f) => f.id === previewFile.id) ?? null}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          isOpen={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => {
+            if (deleteTarget) permanentlyDeleteFile(deleteTarget.id);
+          }}
+          title="تأكيد الحذف النهائي"
+          description={`هل أنت متأكد من الحذف النهائي لملف "${deleteTarget.title}"؟ لا يمكن التراجع عن هذا الإجراء.`}
+          confirmLabel="حذف نهائياً"
+        />
+      )}
+      {batchDeleteConfirmOpen && (
+        <ConfirmDialog
+          isOpen={batchDeleteConfirmOpen}
+          onClose={() => setBatchDeleteConfirmOpen(false)}
+          onConfirm={() => void handleConfirmBatchPermanentDelete()}
+          title="تأكيد الحذف النهائي للملفات المحددة"
+          description={`هل أنت متأكد من الحذف النهائي لـ ${selectedIds.size} ملفات محددة؟ لا يمكن التراجع عن هذا الإجراء.`}
+          confirmLabel="حذف نهائياً"
+        />
+      )}
     </div>
   );
 };

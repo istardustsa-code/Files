@@ -120,8 +120,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
                 onClick={() => {
                   setAdminNav(item.id);
                   onCloseMobile();
+                  window.scrollTo({ top: 0, behavior: 'auto' });
                 }}
-                className={`w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm transition-colors ${
+                className={`w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm transition-colors duration-75 ${
                   active
                     ? 'bg-[#A8B9A5]/25 text-[#454943] font-semibold'
                     : 'text-[#666560] hover:bg-[#F7F5F0] hover:text-[#454943]'
@@ -155,8 +156,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
                 onClick={() => {
                   setManagerNav(item.id);
                   onCloseMobile();
+                  window.scrollTo({ top: 0, behavior: 'auto' });
                 }}
-                className={`w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm transition-colors ${
+                className={`w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm transition-colors duration-75 ${
                   active
                     ? 'bg-[#A8B9A5]/25 text-[#454943] font-semibold'
                     : 'text-[#666560] hover:bg-[#F7F5F0] hover:text-[#454943]'
@@ -190,8 +192,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
                 onClick={() => {
                   setTeacherNav(item.id);
                   onCloseMobile();
+                  window.scrollTo({ top: 0, behavior: 'auto' });
                 }}
-                className={`w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm transition-colors ${
+                className={`w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm transition-colors duration-75 ${
                   active
                     ? 'bg-[#A8B9A5]/25 text-[#454943] font-semibold'
                     : 'text-[#666560] hover:bg-[#F7F5F0] hover:text-[#454943]'
@@ -241,7 +244,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
       {mobileOpen && (
         <div className="fixed inset-0 z-40 lg:hidden flex">
           <div
-            className="fixed inset-0 bg-[#454943]/30 backdrop-blur-[1px]"
+            className="fixed inset-0 bg-[#454943]/35"
             onClick={onCloseMobile}
           />
           <aside className="relative z-50 w-72 max-w-[85vw] h-full shadow-xl">

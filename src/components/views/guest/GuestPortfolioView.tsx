@@ -178,7 +178,7 @@ export const GuestPortfolioView: React.FC = () => {
   return (
     <div dir="rtl" className="min-h-screen bg-[#F7F5F0] text-[#454943] flex flex-col">
       {/* Top Read-Only Header */}
-      <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-xs border-b border-[#D9C9B5]/80">
+      <header className="sticky top-0 z-20 bg-white/95 border-b border-[#D9C9B5]/80">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <LogoMark size="sm" />

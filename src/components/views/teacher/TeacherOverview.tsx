@@ -19,7 +19,6 @@ import { usePlatform } from '../../../context/PlatformContext';
 import { UploadFileModal } from '../../common/UploadFileModal';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
 import {
-  DuplicateContentBadge,
   FileTypeIconBox,
   ReviewStatusInline,
 } from '../../common/FileTypeIndicator';
@@ -47,7 +46,6 @@ export const TeacherOverview: React.FC = () => {
     openTeacherSection,
     uploadFiles,
     uploadProgress,
-    duplicateFileIds,
     myVisitCode,
     myVisitLogs,
     pushToast,
@@ -82,15 +80,32 @@ export const TeacherOverview: React.FC = () => {
     isVisitLogActiveNow(l.lastSeenAt, l.isLive)
   ).length;
 
-  const activeFiles = visibleFiles.filter((f) => !f.isDeleted);
+  const activeFiles = useMemo(
+    () => visibleFiles.filter((f) => !f.isDeleted),
+    [visibleFiles]
+  );
+  const fileCountBySection = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const f of activeFiles) {
+      map.set(f.sectionId, (map.get(f.sectionId) ?? 0) + 1);
+    }
+    return map;
+  }, [activeFiles]);
   const completionPct = getTeacherCompletionPercent(currentUser.id);
-  const schoolName = schools.find((s) => s.id === currentUser.schoolId)?.name ?? 'مدرستي';
-  const certsCount = activeFiles.filter((f) => f.sectionId === 'sec-3').length;
-  const evidenceCount = activeFiles.filter((f) => f.sectionId === 'sec-4').length;
-  const achievementsCount = visibleAchievements.filter(
-    (a) => a.customFieldValues?._entryKind !== 'note'
-  ).length;
-  const unreadNotifs = visibleNotifications.filter((n) => !n.isRead);
+  const schoolName = useMemo(
+    () => schools.find((s) => s.id === currentUser.schoolId)?.name ?? 'مدرستي',
+    [schools, currentUser.schoolId]
+  );
+  const certsCount = fileCountBySection.get('sec-3') ?? 0;
+  const evidenceCount = fileCountBySection.get('sec-4') ?? 0;
+  const achievementsCount = useMemo(
+    () => visibleAchievements.filter((a) => a.customFieldValues?._entryKind !== 'note').length,
+    [visibleAchievements]
+  );
+  const unreadNotifs = useMemo(
+    () => visibleNotifications.filter((n) => !n.isRead),
+    [visibleNotifications]
+  );
 
   const handleQuickInstantUpload = (incoming: FileList | null) => {
     if (!incoming || incoming.length === 0 || !resolvedQuickSec) return;
@@ -324,8 +339,7 @@ export const TeacherOverview: React.FC = () => {
                   {resolvedQuickSub ? resolvedQuickSub.label : resolvedQuickSec.title}»
                 </p>
                 <p className="text-xs text-[#666560] mt-0.5 tabular-nums">
-                  رفع فوري متوازي مع كشف تلقائي للملفات المكررة في محتواها الداخلي · حتى{' '}
-                  {settings.maxFileSizeMb} م.ب
+                  رفع فوري متوازي وسريع للملفات والصور · حتى {settings.maxFileSizeMb} م.ب
                 </p>
               </div>
             </div>
@@ -372,7 +386,7 @@ export const TeacherOverview: React.FC = () => {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {activeSections.slice(0, 10).map((sec) => {
-              const count = activeFiles.filter((f) => f.sectionId === sec.id).length;
+              const count = fileCountBySection.get(sec.id) ?? 0;
               return (
                 <button
                   key={sec.id}
@@ -479,9 +493,7 @@ export const TeacherOverview: React.FC = () => {
               {activeFiles.length}
             </p>
             <p className="text-xs text-[#666560] mt-1 tabular-nums">
-              {duplicateFileIds.size > 0
-                ? `${duplicateFileIds.size} ملف مكرر المحتوى`
-                : `${evidenceCount} منها شواهد تعليمية`}
+              {evidenceCount} منها شواهد تعليمية
             </p>
           </div>
         </button>
@@ -512,16 +524,13 @@ export const TeacherOverview: React.FC = () => {
                   <div className="flex items-center gap-3 min-w-0">
                     <FileTypeIconBox fileType={file.fileType} size="sm" />
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => setPreviewFile(file)}
-                          className="text-sm font-medium text-[#454943] hover:text-[#556952] truncate block text-right"
-                        >
-                          {file.title}
-                        </button>
-                        {duplicateFileIds.has(file.id) && <DuplicateContentBadge compact />}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewFile(file)}
+                        className="text-sm font-medium text-[#454943] hover:text-[#556952] truncate block text-right"
+                      >
+                        {file.title}
+                      </button>
                       <p className="text-xs text-[#666560] tabular-nums">
                         {secTitle} · {formatBytesArabic(file.sizeBytes)} ·{' '}
                         {formatDateArabic(file.uploadedAt)}
@@ -568,12 +577,18 @@ export const TeacherOverview: React.FC = () => {
         </section>
       </div>
 
-      <UploadFileModal isOpen={uploadOpen} onClose={() => setUploadOpen(false)} />
-      <FilePreviewModal
-        file={visibleFiles.find((f) => f.id === previewFile?.id) ?? null}
-        onClose={() => setPreviewFile(null)}
-      />
-      <VisitCodeModal isOpen={visitModalOpen} onClose={() => setVisitModalOpen(false)} />
+      {uploadOpen && (
+        <UploadFileModal isOpen={uploadOpen} onClose={() => setUploadOpen(false)} />
+      )}
+      {previewFile && (
+        <FilePreviewModal
+          file={visibleFiles.find((f) => f.id === previewFile.id) ?? null}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
+      {visitModalOpen && (
+        <VisitCodeModal isOpen={visitModalOpen} onClose={() => setVisitModalOpen(false)} />
+      )}
     </div>
   );
 };

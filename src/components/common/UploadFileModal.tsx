@@ -9,10 +9,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { Modal } from './Modal';
-import { DuplicateContentBadge } from './FileTypeIndicator';
 import { usePlatform } from '../../context/PlatformContext';
 import { detectFileCategory, formatBytesArabic } from '../../utils/formatters';
-import { computeFileContentHash, getFileContentHashKey } from '../../utils/fileHash';
 
 interface UploadFileModalProps {
   isOpen: boolean;
@@ -27,21 +25,26 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
   defaultSectionId,
   defaultSubSectionId,
 }) => {
-  const { visibleSections, visibleFiles, settings, uploadFiles, pushToast } = usePlatform();
+  const { visibleSections, settings, uploadFiles, pushToast } = usePlatform();
   const activeSections = useMemo(
     () => visibleSections.filter((s) => s.isActive),
     [visibleSections]
   );
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [queuedHashes, setQueuedHashes] = useState<string[]>([]);
   const [sectionId, setSectionId] = useState<string>(
     defaultSectionId || activeSections[0]?.id || ''
   );
   const [subSectionId, setSubSectionId] = useState<string>(defaultSubSectionId || '');
   const [customTitle, setCustomTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [instantUploadOnPick, setInstantUploadOnPick] = useState(false);
+  const [instantUploadOnPick, setInstantUploadOnPick] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('files_by_lama_instant_upload') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -65,35 +68,9 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
     [availableSubSections, subSectionId]
   );
 
-  const existingContentHashes = useMemo(() => {
-    const map = new Map<string, string>();
-    visibleFiles.forEach((f) => {
-      if (f.isDeleted) return;
-      const h = getFileContentHashKey(f);
-      if (h) map.set(h, f.title);
-    });
-    return map;
-  }, [visibleFiles]);
-
-  useEffect(() => {
-    let active = true;
-    if (selectedFiles.length === 0) {
-      setQueuedHashes([]);
-      return;
-    }
-    Promise.all(
-      selectedFiles.map((f) => computeFileContentHash(f).catch(() => ''))
-    ).then((hashes) => {
-      if (active) setQueuedHashes(hashes);
-    });
-    return () => {
-      active = false;
-    };
-  }, [selectedFiles]);
-
   const imagePreviews = useMemo(() => {
-    return selectedFiles.map((f) =>
-      f.type.startsWith('image/') ? URL.createObjectURL(f) : null
+    return selectedFiles.map((f, idx) =>
+      idx < 10 && f.type.startsWith('image/') ? URL.createObjectURL(f) : null
     );
   }, [selectedFiles]);
 
@@ -212,7 +189,15 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
           <input
             type="checkbox"
             checked={instantUploadOnPick}
-            onChange={(e) => setInstantUploadOnPick(e.target.checked)}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setInstantUploadOnPick(checked);
+              try {
+                window.localStorage.setItem('files_by_lama_instant_upload', checked ? '1' : '0');
+              } catch {
+                // ignore storage quota/privacy errors
+              }
+            }}
             className="w-4 h-4 accent-[#556952] rounded cursor-pointer shrink-0"
           />
         </label>
@@ -345,64 +330,46 @@ export const UploadFileModal: React.FC<UploadFileModalProps> = ({
           </div>
         </div>
 
-        {/* Selected files queue with live internal content duplicate preview */}
+        {/* Selected files queue */}
         {selectedFiles.length > 0 && (
           <div className="border border-[#D9C9B5]/80 rounded-xl divide-y divide-[#D9C9B5]/50 bg-[#F7F5F0]/40 max-h-48 overflow-y-auto">
             <div className="px-3.5 py-2 bg-[#F7F5F0] text-xs font-medium text-[#454943] flex items-center justify-between">
               <span>المحدد حالياً ({selectedFiles.length} مرفقات وصور)</span>
               <span className="text-[11px] text-[#666560]">يمكنك إضافة المزيد قبل الحفظ</span>
             </div>
-            {selectedFiles.map((file, idx) => {
-              const hash = queuedHashes[idx];
-              const existingMatchTitle = hash ? existingContentHashes.get(hash) : undefined;
-              const duplicateInQueue =
-                Boolean(hash) &&
-                queuedHashes.some((otherHash, otherIdx) => otherIdx !== idx && otherHash === hash);
-              const isDup = Boolean(existingMatchTitle || duplicateInQueue);
-
-              return (
-                <div
-                  key={`${file.name}-${idx}`}
-                  className="flex items-center justify-between gap-3 px-3.5 py-2.5"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    {imagePreviews[idx] ? (
-                      <img
-                        src={imagePreviews[idx]!}
-                        alt={file.name}
-                        className="w-9 h-9 rounded-lg object-cover border border-[#D9C9B5]/70 shrink-0"
-                      />
-                    ) : file.type.startsWith('image/') ? (
-                      <ImageIcon size={16} className="text-[#556952] shrink-0" />
-                    ) : (
-                      <FileText size={16} className="text-[#556952] shrink-0" />
-                    )}
-                    <span className="text-sm text-[#454943] truncate">{file.name}</span>
-                    {isDup && (
-                      <DuplicateContentBadge
-                        compact
-                        title={
-                          existingMatchTitle
-                            ? `مطابق في محتواه الداخلي للملف المحفوظ: ${existingMatchTitle}`
-                            : 'مكرر في محتواه الداخلي ضمن نفس القائمة المختارة'
-                        }
-                      />
-                    )}
-                    <span className="text-xs text-[#666560] font-mono-num shrink-0">
-                      {formatBytesArabic(file.size)}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
-                    className="text-[#85847E] hover:text-[#8A5E56] p-1 shrink-0"
-                    aria-label="إزالة الملف من القائمة"
-                  >
-                    <X size={15} />
-                  </button>
+            {selectedFiles.map((file, idx) => (
+              <div
+                key={`${file.name}-${idx}`}
+                className="flex items-center justify-between gap-3 px-3.5 py-2.5"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {imagePreviews[idx] ? (
+                    <img
+                      src={imagePreviews[idx]!}
+                      alt={file.name}
+                      decoding="async"
+                      className="w-9 h-9 rounded-lg object-cover border border-[#D9C9B5]/70 shrink-0"
+                    />
+                  ) : file.type.startsWith('image/') ? (
+                    <ImageIcon size={16} className="text-[#556952] shrink-0" />
+                  ) : (
+                    <FileText size={16} className="text-[#556952] shrink-0" />
+                  )}
+                  <span className="text-sm text-[#454943] truncate">{file.name}</span>
+                  <span className="text-xs text-[#666560] font-mono-num shrink-0">
+                    {formatBytesArabic(file.size)}
+                  </span>
                 </div>
-              );
-            })}
+                <button
+                  type="button"
+                  onClick={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
+                  className="text-[#85847E] hover:text-[#8A5E56] p-1 shrink-0"
+                  aria-label="إزالة الملف من القائمة"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ))}
           </div>
         )}
 

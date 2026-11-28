@@ -136,7 +136,7 @@ export const AppShell: React.FC<AppShellProps> = ({
         )}
 
         {/* Clean 3-Zone Top Header */}
-        <header className="bg-white/90 backdrop-blur-sm border-b border-[#D9C9B5]/60 px-4 sm:px-8 py-4 sticky top-0 z-30">
+        <header className="bg-white/95 border-b border-[#D9C9B5]/60 px-4 sm:px-8 py-4 sticky top-0 z-30">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <button
@@ -209,8 +209,12 @@ export const AppShell: React.FC<AppShellProps> = ({
         </main>
       </div>
 
-      <UploadFileModal isOpen={uploadModalOpen} onClose={() => setUploadModalOpen(false)} />
-      <SupabaseSetupModal isOpen={setupModalOpen} onClose={() => setSetupModalOpen(false)} />
+      {uploadModalOpen && (
+        <UploadFileModal isOpen={uploadModalOpen} onClose={() => setUploadModalOpen(false)} />
+      )}
+      {setupModalOpen && (
+        <SupabaseSetupModal isOpen={setupModalOpen} onClose={() => setSetupModalOpen(false)} />
+      )}
       <ToastContainer />
     </div>
   );

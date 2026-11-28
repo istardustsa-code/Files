@@ -9,10 +9,9 @@ import {
   FileText,
   ImagePlus,
   FilePlus2,
-  Copy,
 } from 'lucide-react';
 import { Modal } from './Modal';
-import { DuplicateContentBadge, FileTypeIconBox, ReviewStatusInline } from './FileTypeIndicator';
+import { FileTypeIconBox, ReviewStatusInline } from './FileTypeIndicator';
 import { usePlatform } from '../../context/PlatformContext';
 import type { PortfolioFile } from '../../types/platform';
 import {
@@ -49,8 +48,6 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
     moveFileToSection,
     softDeleteFile,
     restoreFile,
-    duplicateFileIds,
-    duplicatePeersByFileId,
     pushToast,
   } = usePlatform();
 
@@ -118,8 +115,6 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   const currentSubSectionId = getFileSubSectionId(activeFile) ?? '';
   const targetSectionObj = visibleSections.find((s) => s.id === targetSectionId);
   const targetSubSections = targetSectionObj?.customFields ?? [];
-  const activeDuplicatePeers = duplicatePeersByFileId.get(activeFile.id) ?? [];
-  const isDuplicateActive = duplicateFileIds.has(activeFile.id);
 
   const handleAppendIncomingFiles = async (incoming: FileList | null) => {
     if (!incoming || incoming.length === 0) return;
@@ -215,27 +210,6 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
       maxWidthClass="max-w-3xl"
     >
       <div className="space-y-5">
-        {isDuplicateActive && (
-          <div className="p-3.5 rounded-xl bg-[#D8BDB7]/25 border border-[#D8BDB7] text-xs text-[#7B4B43] space-y-1">
-            <div className="flex items-center gap-1.5 font-semibold">
-              <Copy size={14} className="shrink-0" />
-              <span>تنبيه: محتوى هذا الملف الداخلي مكرر ومطابق لملف آخر</span>
-            </div>
-            {activeDuplicatePeers.length > 0 && (
-              <p className="text-[11px] leading-relaxed">
-                النسخ المطابقة:{' '}
-                {activeDuplicatePeers
-                  .slice(0, 3)
-                  .map((p) => `«${p.title}» (${getSectionBreadcrumbLabel(visibleSections, p)})`)
-                  .join(' · ')}
-                {activeDuplicatePeers.length > 3
-                  ? ` · و${activeDuplicatePeers.length - 3} ملفات أخرى`
-                  : ''}
-              </p>
-            )}
-          </div>
-        )}
-
         {/* Bundled Attachments Switcher + Add More Images/Files */}
         {(bundleFiles.length > 1 || (!readOnly && !activeFile.isDeleted)) && (
           <div className="p-3.5 rounded-2xl bg-[#F7F5F0]/70 border border-[#D9C9B5]/70 space-y-3">
@@ -306,12 +280,9 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                       <div className="flex items-center gap-2.5 min-w-0">
                         <FileTypeIconBox fileType={item.fileType} size="sm" />
                         <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <p className="text-xs font-medium text-[#454943] truncate">
-                              {idx + 1}. {item.originalFileName}
-                            </p>
-                            {duplicateFileIds.has(item.id) && <DuplicateContentBadge compact />}
-                          </div>
+                          <p className="text-xs font-medium text-[#454943] truncate">
+                            {idx + 1}. {item.originalFileName}
+                          </p>
                           <p className="text-[11px] text-[#666560] tabular-nums">
                             {getFileTypeLabelArabic(item.fileType)} ·{' '}
                             {formatBytesArabic(item.sizeBytes)}

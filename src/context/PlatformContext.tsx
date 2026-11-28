@@ -44,11 +44,6 @@ import {
   prepareFileForPortfolioUpload,
   SUPABASE_SAFE_SINGLE_OBJECT_BYTES,
 } from '../utils/pdfLargeFile';
-import {
-  computeFileContentHash,
-  findContentDuplicateInfo,
-  getFileContentHashKey,
-} from '../utils/fileHash';
 
 export interface ToastMessage {
   id: string;
@@ -111,11 +106,6 @@ interface PlatformContextValue {
   branding: PlatformBranding;
   permissions: Record<UserRole, RolePermissionSet>;
   settings: PlatformSettings;
-
-  // Duplicate Internal Content Detection
-  duplicateFileIds: Set<string>;
-  duplicatePeersByFileId: Map<string, PortfolioFile[]>;
-  duplicateLogicalGroupsCount: number;
 
   // File operations
   uploadProgress: { active: boolean; completed: number; total: number } | null;
@@ -256,8 +246,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     completed: number;
     total: number;
   } | null>(null);
-  const [runtimeFileHashes, setRuntimeFileHashes] = useState<Record<string, string>>({});
-  const hashScanAttemptedRef = useRef<Set<string>>(new Set());
+  const signedUrlCacheRef = useRef<Map<string, { url: string; expiresAt: number }>>(new Map());
 
   const openTeacherSection = useCallback((sectionId: string) => {
     setFocusedSectionId(sectionId);
@@ -278,9 +267,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }, 3800);
   }, []);
 
-  const dismissToast = (id: string) => {
+  const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+  }, []);
 
   const hydrateLiveWorkspace = useCallback(
     async (userId: string) => {
@@ -460,13 +449,13 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  const recordActivity = async (
+  const recordActivity = (
     actionType: ActivityLogEntry['actionType'],
     description: string,
     targetName?: string
   ) => {
     const entry: ActivityLogEntry = {
-      id: `act-${Date.now()}`,
+      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       actorId: currentUser.id,
       actorName: currentUser.fullName,
       actorRole: currentUser.role,
@@ -478,7 +467,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setActivityLogs((prev) => [entry, ...prev]);
 
     if (isSupabaseLive && session?.user) {
-      await SupabaseBackend.logActivity({
+      void SupabaseBackend.logActivity({
         actorId: currentUser.id,
         actorName: currentUser.fullName,
         actorRole: currentUser.role,
@@ -621,83 +610,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [visibleNotifications]
   );
 
-  const duplicateInfo = useMemo(
-    () => findContentDuplicateInfo(visibleFiles, runtimeFileHashes),
-    [visibleFiles, runtimeFileHashes]
-  );
-
-  // Lazily verify SHA-256 internal content hash for older files that share an exact byte size
-  useEffect(() => {
-    const activeOwned = files.filter((f) => !f.isDeleted && f.ownerId === currentUser.id);
-    if (activeOwned.length < 2) return;
-
-    const sizeBuckets = new Map<number, PortfolioFile[]>();
-    for (const f of activeOwned) {
-      if (f.sizeBytes <= 0) continue;
-      const list = sizeBuckets.get(f.sizeBytes);
-      if (list) list.push(f);
-      else sizeBuckets.set(f.sizeBytes, [f]);
-    }
-
-    const candidates: PortfolioFile[] = [];
-    sizeBuckets.forEach((group) => {
-      if (group.length < 2) return;
-      for (const f of group) {
-        const existingHash = getFileContentHashKey(f, runtimeFileHashes);
-        if (!existingHash && !hashScanAttemptedRef.current.has(f.id)) {
-          candidates.push(f);
-        }
-      }
-    });
-
-    if (candidates.length === 0) return;
-
-    let cancelled = false;
-    const scanBatch = async () => {
-      for (const target of candidates.slice(0, 8)) {
-        if (cancelled) break;
-        hashScanAttemptedRef.current.add(target.id);
-        try {
-          const url =
-            target.localPreviewUrl ||
-            (isSupabaseLive ? await SupabaseBackend.getSignedFileUrl(target.storagePath) : null);
-          if (!url || cancelled) continue;
-          const res = await fetch(url);
-          if (!res.ok || cancelled) continue;
-          const buf = await res.arrayBuffer();
-          const hash = await computeFileContentHash(buf);
-          if (cancelled) break;
-
-          setRuntimeFileHashes((prev) => ({ ...prev, [target.id]: hash }));
-          if (isSupabaseLive && target.ownerId === currentUser.id) {
-            const nextValues = {
-              ...(target.customFieldValues ?? {}),
-              _contentHash: hash,
-            };
-            await SupabaseBackend.updateFileMetadata(target.id, {
-              customFieldValues: nextValues,
-            })
-              .then((updated) => {
-                if (!cancelled) {
-                  setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
-                }
-              })
-              .catch(() => undefined);
-          }
-        } catch {
-          // Ignore transient network failures during background duplicate verification
-        }
-      }
-    };
-
-    void scanBatch();
-    return () => {
-      cancelled = true;
-    };
-  }, [files, currentUser.id, isSupabaseLive, runtimeFileHashes]);
-
   // --------------------------------------------------------------------------
-  // File Operations (Parallelized + Content Hashing)
+  // File Operations (High-Speed Parallel Batch Upload & Cached Previews)
   // --------------------------------------------------------------------------
   const uploadFiles = async (items: UploadFileInput[]) => {
     if (items.length === 0) return;
@@ -706,38 +620,20 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       pushToast('جاري تجهيز ورفع الملف الكبير... يرجى الانتظار قليلاً', 'info');
     }
 
-    // Compute exact SHA-256 content hashes in parallel before splitting/uploading
-    const originalHashes = await Promise.all(
-      items.map((item) => computeFileContentHash(item.file).catch(() => ''))
+    const preparedResults = await Promise.all(
+      items.map(async (item) => {
+        const prepared = await prepareFileForPortfolioUpload(
+          item.file,
+          SUPABASE_SAFE_SINGLE_OBJECT_BYTES
+        );
+        return { item, prepared };
+      })
     );
-
-    const existingHashes = new Set<string>();
-    files.forEach((f) => {
-      if (f.isDeleted || f.ownerId !== currentUser.id) return;
-      const h = getFileContentHashKey(f, runtimeFileHashes);
-      if (h) existingHashes.add(h);
-    });
-
-    const duplicateDetectedHashes = new Set<string>();
-    const seenBatchHashes = new Set<string>();
-    originalHashes.forEach((h) => {
-      if (!h) return;
-      if (existingHashes.has(h) || seenBatchHashes.has(h)) {
-        duplicateDetectedHashes.add(h);
-      }
-      seenBatchHashes.add(h);
-    });
 
     const preparedItems: UploadFileInput[] = [];
     let splitPerformed = false;
 
-    for (let idx = 0; idx < items.length; idx += 1) {
-      const item = items[idx];
-      const origHash = originalHashes[idx];
-      const prepared = await prepareFileForPortfolioUpload(
-        item.file,
-        SUPABASE_SAFE_SINGLE_OBJECT_BYTES
-      );
+    for (const { item, prepared } of preparedResults) {
       if (prepared.wasSplitPdf && prepared.files.length > 1) {
         splitPerformed = true;
         const sharedBundleId =
@@ -751,18 +647,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               ...(item.customFieldValues ?? {}),
               _bundleId: sharedBundleId,
               ...(prepared.totalPages ? { _totalPages: String(prepared.totalPages) } : {}),
-              ...(origHash ? { _originalContentHash: origHash } : {}),
             },
           });
         });
       } else {
-        preparedItems.push({
-          ...item,
-          customFieldValues: {
-            ...(item.customFieldValues ?? {}),
-            ...(origHash ? { _contentHash: origHash } : {}),
-          },
-        });
+        preparedItems.push(item);
       }
     }
 
@@ -770,55 +659,39 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const totalCount = preparedItems.length;
       setUploadProgress({ active: true, completed: 0, total: totalCount });
       try {
-        const uploadedResults: (PortfolioFile | null)[] = new Array(totalCount).fill(null);
-        let cursor = 0;
-        let completedCount = 0;
-        const concurrency = Math.min(4, totalCount);
-
-        const worker = async () => {
-          while (cursor < totalCount) {
-            const currentIdx = cursor;
-            cursor += 1;
-            const item = preparedItems[currentIdx];
-            const saved = await SupabaseBackend.uploadPrivateFile({
-              ownerId: currentUser.id,
-              sectionId: item.sectionId,
-              file: item.file,
-              title: item.title,
-              description: item.description,
-              customFieldValues: item.customFieldValues,
-            });
-            uploadedResults[currentIdx] = saved;
-            completedCount += 1;
-            setUploadProgress({ active: true, completed: completedCount, total: totalCount });
+        const uploaded = await SupabaseBackend.uploadPrivateFilesBatch(
+          preparedItems.map((item) => ({
+            ownerId: currentUser.id,
+            sectionId: item.sectionId,
+            file: item.file,
+            title: item.title,
+            description: item.description,
+            customFieldValues: item.customFieldValues,
+          })),
+          {
+            onProgress: (completed, total) => {
+              setUploadProgress({ active: true, completed, total });
+            },
+            onChunkSaved: (savedChunk) => {
+              setFiles((prev) => [...savedChunk, ...prev]);
+            },
           }
-        };
+        );
 
-        await Promise.all(Array.from({ length: concurrency }, () => worker()));
-        const uploaded = uploadedResults.filter((f): f is PortfolioFile => Boolean(f));
-
-        setFiles((prev) => [...uploaded, ...prev]);
-        await recordActivity(
+        recordActivity(
           'file_upload',
           uploaded.length === 1
             ? `تم رفع ملف جديد: ${uploaded[0].title}`
             : `تم رفع ${uploaded.length} ملفات جديدة`,
           uploaded[0]?.title
         );
-        if (duplicateDetectedHashes.size > 0) {
-          pushToast(
-            `تم الرفع بنجاح، مع تنبيه بوجود (${duplicateDetectedHashes.size}) ملف مطابق في محتواه الداخلي لملف آخر (تم تمييزه بعلامة التكرار)`,
-            'warning'
-          );
-        } else {
-          pushToast(
-            splitPerformed
-              ? `تم تجهيز ورفع الملف الكبير كاملاً (${uploaded.length} أجزاء داخل عنصر واحد)`
-              : uploaded.length === 1
-                ? 'تم رفع الملف في التخزين الخاص'
-                : `تم رفع ${uploaded.length} ملفات بنجاح`
-          );
-        }
+        pushToast(
+          splitPerformed
+            ? `تم تجهيز ورفع الملف الكبير كاملاً (${uploaded.length} أجزاء داخل عنصر واحد)`
+            : uploaded.length === 1
+              ? 'تم رفع الملف في التخزين الخاص'
+              : `تم رفع ${uploaded.length} ملفات بنجاح`
+        );
       } catch (err) {
         const rawMsg = err instanceof Error ? err.message : 'فشل رفع الملف';
         const lower = rawMsg.toLowerCase();
@@ -856,33 +729,41 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       storagePath: `${currentUser.id}/${item.sectionId}/${Date.now()}_${item.file.name}`,
     }));
     setFiles((prev) => [...created, ...prev]);
-    await recordActivity('file_upload', `تم رفع ملف (${created[0]?.title ?? ''})`, created[0]?.title);
-    if (duplicateDetectedHashes.size > 0) {
-      pushToast(
-        `تم الحفظ، مع تنبيه بوجود ملف مطابق في محتواه الداخلي لملف آخر (تم تمييزه بعلامة التكرار)`,
-        'warning'
-      );
-    } else {
-      pushToast(
-        splitPerformed
-          ? `تم تجهيز ورفع الملف الكبير كاملاً (${created.length} أجزاء داخل عنصر واحد)`
-          : created.length === 1
-            ? 'تم رفع الملف بنجاح'
-            : `تم رفع ${created.length} ملفات بنجاح`
-      );
-    }
+    recordActivity('file_upload', `تم رفع ملف (${created[0]?.title ?? ''})`, created[0]?.title);
+    pushToast(
+      splitPerformed
+        ? `تم تجهيز ورفع الملف الكبير كاملاً (${created.length} أجزاء داخل عنصر واحد)`
+        : created.length === 1
+          ? 'تم رفع الملف بنجاح'
+          : `تم رفع ${created.length} ملفات بنجاح`
+    );
   };
 
-  const getSignedFileUrl = async (file: PortfolioFile): Promise<string | null> => {
-    if (file.localPreviewUrl) return file.localPreviewUrl;
-    if (!isSupabaseLive) return null;
-    try {
-      return await SupabaseBackend.getSignedFileUrl(file.storagePath);
-    } catch (err) {
-      pushToast(err instanceof Error ? err.message : 'تعذر جلب الرابط الموقّع للملف', 'warning');
-      return null;
-    }
-  };
+  const getSignedFileUrl = useCallback(
+    async (file: PortfolioFile): Promise<string | null> => {
+      if (file.localPreviewUrl) return file.localPreviewUrl;
+      if (!isSupabaseLive) return null;
+
+      const cacheKey = `auth:${file.storagePath}`;
+      const cached = signedUrlCacheRef.current.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.url;
+      }
+
+      try {
+        const url = await SupabaseBackend.getSignedFileUrl(file.storagePath, 3600);
+        signedUrlCacheRef.current.set(cacheKey, {
+          url,
+          expiresAt: Date.now() + 45 * 60 * 1000,
+        });
+        return url;
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : 'تعذر جلب الرابط الموقّع للملف', 'warning');
+        return null;
+      }
+    },
+    [isSupabaseLive, pushToast]
+  );
 
   const renameAndUpdateFile = async (
     fileId: string,
@@ -949,22 +830,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const existing = files.find((f) => f.id === fileId);
     if (!existing) return;
 
-    const nextHash = await computeFileContentHash(newFile).catch(() => '');
-    const nextCustomValues: Record<string, string> = {
-      ...(existing.customFieldValues ?? {}),
-    };
-    delete nextCustomValues._originalContentHash;
-    if (nextHash) nextCustomValues._contentHash = nextHash;
-
     if (isSupabaseLive) {
       try {
-        const updated = await SupabaseBackend.replacePrivateFile(
-          existing,
-          newFile,
-          nextCustomValues
-        );
+        const updated = await SupabaseBackend.replacePrivateFile(existing, newFile);
+        signedUrlCacheRef.current.delete(`auth:${existing.storagePath}`);
         setFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
-        await recordActivity('file_update', 'تم استبدال الملف بنسخة جديدة', newFile.name);
+        recordActivity('file_update', 'تم استبدال الملف بنسخة جديدة', newFile.name);
         pushToast('تم استبدال الملف في التخزين الخاص');
       } catch (err) {
         pushToast(err instanceof Error ? err.message : 'فشل استبدال الملف', 'warning');
@@ -983,7 +854,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               fileType,
               mimeType: newFile.type || f.mimeType,
               sizeBytes: newFile.size,
-              customFieldValues: nextCustomValues,
               localPreviewUrl: previewUrl,
               updatedAt: new Date().toISOString(),
             }
@@ -1267,7 +1137,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     if (isSupabaseLive) {
       try {
-        await Promise.all(targets.map((f) => SupabaseBackend.softDeleteFile(f.id)));
+        await SupabaseBackend.batchSoftDeleteFiles(targets.map((f) => f.id));
       } catch (err) {
         pushToast(err instanceof Error ? err.message : 'تعذر حذف الملفات المحددة', 'warning');
         return;
@@ -1279,7 +1149,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setFiles((prev) =>
       prev.map((f) => (targetIdSet.has(f.id) ? { ...f, isDeleted: true, deletedAt: now } : f))
     );
-    await recordActivity('file_delete', `تم نقل ${targets.length} ملفات إلى سلة المحذوفات`);
+    recordActivity('file_delete', `تم نقل ${targets.length} ملفات إلى سلة المحذوفات`);
     pushToast(`تم نقل ${targets.length} ملفات إلى سلة المحذوفات`, 'info');
   };
 
@@ -1291,7 +1161,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     if (isSupabaseLive) {
       try {
-        await Promise.all(targets.map((f) => SupabaseBackend.restoreFile(f.id)));
+        await SupabaseBackend.batchRestoreFiles(targets.map((f) => f.id));
       } catch (err) {
         pushToast(err instanceof Error ? err.message : 'تعذر استعادة الملفات المحددة', 'warning');
         return;
@@ -1302,7 +1172,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setFiles((prev) =>
       prev.map((f) => (targetIdSet.has(f.id) ? { ...f, isDeleted: false, deletedAt: undefined } : f))
     );
-    await recordActivity('file_restore', `تمت استعادة ${targets.length} ملفات من سلة المحذوفات`);
+    recordActivity('file_restore', `تمت استعادة ${targets.length} ملفات من سلة المحذوفات`);
     pushToast(`تمت استعادة ${targets.length} ملفات بنجاح`);
   };
 
@@ -1314,7 +1184,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     if (isSupabaseLive) {
       try {
-        await Promise.all(targets.map((f) => SupabaseBackend.permanentlyDeleteFile(f)));
+        await SupabaseBackend.batchPermanentlyDeleteFiles(targets);
       } catch (err) {
         pushToast(
           err instanceof Error ? err.message : 'تعذر الحذف النهائي للملفات المحددة',
@@ -1326,7 +1196,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const targetIdSet = new Set(targets.map((t) => t.id));
     setFiles((prev) => prev.filter((f) => !targetIdSet.has(f.id)));
-    await recordActivity('file_delete', `تم الحذف النهائي لـ ${targets.length} ملفات`);
+    recordActivity('file_delete', `تم الحذف النهائي لـ ${targets.length} ملفات`);
     pushToast(`تم الحذف النهائي لـ ${targets.length} ملفات`, 'warning');
   };
 
@@ -2310,19 +2180,34 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     pushToast('تم إنهاء جلسة الزيارة المؤقتة بنجاح', 'info');
   }, [guestVisitSession, isSupabaseLive, pushToast]);
 
-  const getGuestSignedFileUrl = async (file: PortfolioFile): Promise<string | null> => {
-    if (file.localPreviewUrl) return file.localPreviewUrl;
-    if (!isSupabaseLive) return null;
-    try {
-      return await SupabaseBackend.getGuestSignedFileUrl(file.storagePath, 300);
-    } catch (err) {
-      pushToast(
-        err instanceof Error ? err.message : 'تعذر فتح الملف — ربما تم إيقاف كود الزيارة',
-        'warning'
-      );
-      return null;
-    }
-  };
+  const getGuestSignedFileUrl = useCallback(
+    async (file: PortfolioFile): Promise<string | null> => {
+      if (file.localPreviewUrl) return file.localPreviewUrl;
+      if (!isSupabaseLive) return null;
+
+      const cacheKey = `guest:${file.storagePath}`;
+      const cached = signedUrlCacheRef.current.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.url;
+      }
+
+      try {
+        const url = await SupabaseBackend.getGuestSignedFileUrl(file.storagePath, 300);
+        signedUrlCacheRef.current.set(cacheKey, {
+          url,
+          expiresAt: Date.now() + 4 * 60 * 1000,
+        });
+        return url;
+      } catch (err) {
+        pushToast(
+          err instanceof Error ? err.message : 'تعذر فتح الملف — ربما تم إيقاف كود الزيارة',
+          'warning'
+        );
+        return null;
+      }
+    },
+    [isSupabaseLive, pushToast]
+  );
 
   // Heartbeat & Pagehide cleanup while guest visit session is active
   useEffect(() => {
@@ -2424,9 +2309,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         branding,
         permissions,
         settings,
-        duplicateFileIds: duplicateInfo.duplicateFileIds,
-        duplicatePeersByFileId: duplicateInfo.duplicatePeersByFileId,
-        duplicateLogicalGroupsCount: duplicateInfo.duplicateLogicalGroupsCount,
         uploadProgress,
         uploadFiles,
         getSignedFileUrl,

@@ -36,7 +36,18 @@
   }
 }
 
-/* Smooth focus visibility */
+/* Instant tap response on iPad / mobile & smooth focus visibility */
+button,
+a,
+[role="button"],
+input,
+select,
+textarea,
+label {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 *:focus-visible {
   outline: 2px solid var(--brand-sage-deep);
   outline-offset: 2px;

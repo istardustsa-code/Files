@@ -26,7 +26,6 @@ import { usePlatform } from '../../../context/PlatformContext';
 import { UploadFileModal } from '../../common/UploadFileModal';
 import { FilePreviewModal } from '../../common/FilePreviewModal';
 import {
-  DuplicateContentBadge,
   FileTypeIconBox,
   ReviewStatusInline,
 } from '../../common/FileTypeIndicator';
@@ -46,7 +45,6 @@ import {
   getFileBundleId,
   getFileSubSectionId,
 } from '../../../utils/formatters';
-import { computeFileContentHash, getFileContentHashKey } from '../../../utils/fileHash';
 
 interface TeacherPortfolioViewProps {
   focusMode: 'all' | 'achievements' | 'certificates' | 'evidence' | 'custom_sections';
@@ -69,7 +67,6 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     deleteAchievement,
     uploadFiles,
     uploadProgress,
-    duplicateFileIds,
     batchMoveFilesToSection,
     batchSoftDeleteFiles,
     toggleManagerViewPermission,
@@ -97,13 +94,18 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
   } | null>(null);
   const [subModalTab, setSubModalTab] = useState<'files' | 'note'>('files');
   const [subFilesQueue, setSubFilesQueue] = useState<File[]>([]);
-  const [subQueuedHashes, setSubQueuedHashes] = useState<string[]>([]);
   const [subFileTitle, setSubFileTitle] = useState('');
   const [subFileNote, setSubFileNote] = useState('');
-  const [subInstantUpload, setSubInstantUpload] = useState(false);
+  const [subInstantUpload, setSubInstantUpload] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('files_by_lama_instant_upload') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [subDragging, setSubDragging] = useState(false);
   const [dragHoverSubKey, setDragHoverSubKey] = useState<string | null>(null);
-  const [quickCardTarget, setQuickCardTarget] = useState<{
+  const quickCardTargetRef = useRef<{
     section: PortfolioSection;
     sub: CustomFieldDefinition;
   } | null>(null);
@@ -145,7 +147,10 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
   const [achDate, setAchDate] = useState(new Date().toISOString().slice(0, 10));
   const [achLevel, setAchLevel] = useState<AchievementItem['level']>('مدرسة');
 
-  const activeFiles = visibleFiles.filter((f) => !f.isDeleted);
+  const activeFiles = useMemo(
+    () => visibleFiles.filter((f) => !f.isDeleted),
+    [visibleFiles]
+  );
   const realAchievements = useMemo(
     () => visibleAchievements.filter((a) => a.customFieldValues?._entryKind !== 'note'),
     [visibleAchievements]
@@ -154,6 +159,57 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     () => visibleAchievements.filter((a) => a.customFieldValues?._entryKind === 'note'),
     [visibleAchievements]
   );
+
+  // Pre-index active files and notes by sectionId and subSectionId for O(1) rendering lookups
+  const sectionDataMap = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        allFiles: PortfolioFile[];
+        filesBySub: Map<string, PortfolioFile[]>;
+        notesBySub: Map<string, AchievementItem[]>;
+        totalNotesCount: number;
+      }
+    >();
+
+    const ensureEntry = (sectionId: string) => {
+      let entry = map.get(sectionId);
+      if (!entry) {
+        entry = {
+          allFiles: [],
+          filesBySub: new Map(),
+          notesBySub: new Map(),
+          totalNotesCount: 0,
+        };
+        map.set(sectionId, entry);
+      }
+      return entry;
+    };
+
+    for (const f of activeFiles) {
+      const entry = ensureEntry(f.sectionId);
+      entry.allFiles.push(f);
+      const subId = getFileSubSectionId(f);
+      if (subId) {
+        const list = entry.filesBySub.get(subId);
+        if (list) list.push(f);
+        else entry.filesBySub.set(subId, [f]);
+      }
+    }
+
+    for (const n of subSectionNotes) {
+      const entry = ensureEntry(n.sectionId);
+      entry.totalNotesCount += 1;
+      const subId = n.customFieldValues?._subSectionId;
+      if (subId) {
+        const list = entry.notesBySub.get(subId);
+        if (list) list.push(n);
+        else entry.notesBySub.set(subId, [n]);
+      }
+    }
+
+    return map;
+  }, [activeFiles, subSectionNotes]);
 
   // Active sub-section resolution
   const resolvedSubTarget = useMemo(() => {
@@ -165,34 +221,12 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
   }, [activeSubTarget, visibleSections]);
 
   const subImagePreviews = useMemo(
-    () => subFilesQueue.map((f) => (f.type.startsWith('image/') ? URL.createObjectURL(f) : null)),
+    () =>
+      subFilesQueue.map((f, idx) =>
+        idx < 10 && f.type.startsWith('image/') ? URL.createObjectURL(f) : null
+      ),
     [subFilesQueue]
   );
-
-  const existingContentHashes = useMemo(() => {
-    const map = new Map<string, string>();
-    activeFiles.forEach((f) => {
-      const h = getFileContentHashKey(f);
-      if (h) map.set(h, f.title);
-    });
-    return map;
-  }, [activeFiles]);
-
-  useEffect(() => {
-    let active = true;
-    if (subFilesQueue.length === 0) {
-      setSubQueuedHashes([]);
-      return;
-    }
-    Promise.all(
-      subFilesQueue.map((f) => computeFileContentHash(f).catch(() => ''))
-    ).then((hashes) => {
-      if (active) setSubQueuedHashes(hashes);
-    });
-    return () => {
-      active = false;
-    };
-  }, [subFilesQueue]);
 
   useEffect(() => {
     if (!focusedSectionId) return;
@@ -529,16 +563,13 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
           </button>
           <FileTypeIconBox fileType={file.fileType} size="sm" />
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <button
-                type="button"
-                onClick={() => setPreviewFile(file)}
-                className="text-sm font-medium text-[#454943] hover:text-[#556952] text-right truncate block"
-              >
-                {file.title}
-              </button>
-              {duplicateFileIds.has(file.id) && <DuplicateContentBadge compact />}
-            </div>
+            <button
+              type="button"
+              onClick={() => setPreviewFile(file)}
+              className="text-sm font-medium text-[#454943] hover:text-[#556952] text-right truncate block"
+            >
+              {file.title}
+            </button>
             <p className="text-xs text-[#666560] tabular-nums">
               {formatBytesArabic(file.sizeBytes)} · {formatDateArabic(file.uploadedAt)}
               {file.description ? ` · ${file.description}` : ''}
@@ -697,13 +728,14 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     return true;
   });
 
-  const activeModalFiles = resolvedSubTarget
-    ? activeFiles.filter(
-        (f) =>
-          f.sectionId === resolvedSubTarget.section.id &&
-          getFileSubSectionId(f) === resolvedSubTarget.sub.id
-      )
-    : [];
+  const activeModalFiles = useMemo(() => {
+    if (!resolvedSubTarget) return [];
+    return (
+      sectionDataMap
+        .get(resolvedSubTarget.section.id)
+        ?.filesBySub.get(resolvedSubTarget.sub.id) ?? []
+    );
+  }, [resolvedSubTarget, sectionDataMap]);
 
   const groupedModalEntries = useMemo(() => {
     const groups: { key: string; primary: PortfolioFile; fileIds: string[]; count: number }[] = [];
@@ -726,13 +758,14 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
     return groups;
   }, [activeModalFiles]);
 
-  const activeModalNotes = resolvedSubTarget
-    ? subSectionNotes.filter(
-        (n) =>
-          n.sectionId === resolvedSubTarget.section.id &&
-          n.customFieldValues?._subSectionId === resolvedSubTarget.sub.id
-      )
-    : [];
+  const activeModalNotes = useMemo(() => {
+    if (!resolvedSubTarget) return [];
+    return (
+      sectionDataMap
+        .get(resolvedSubTarget.section.id)
+        ?.notesBySub.get(resolvedSubTarget.sub.id) ?? []
+    );
+  }, [resolvedSubTarget, sectionDataMap]);
 
   const moveTargetSectionObj = visibleSections.find((s) => s.id === moveTargetSectionId);
 
@@ -840,13 +873,14 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
         multiple
         className="hidden"
         onChange={(e) => {
-          if (quickCardTarget) {
+          const target = quickCardTargetRef.current;
+          if (target) {
             const valid = validateIncomingFileList(e.target.files);
             if (valid.length > 0) {
-              dispatchDirectSubUpload(quickCardTarget.section, quickCardTarget.sub, valid);
+              dispatchDirectSubUpload(target.section, target.sub, valid);
             }
           }
-          setQuickCardTarget(null);
+          quickCardTargetRef.current = null;
           e.target.value = '';
         }}
       />
@@ -863,8 +897,8 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
       {/* Sections & Compact Sub-section Icon Grids */}
       <div className="space-y-5">
         {displayedSections.map((sec) => {
-          const secFiles = activeFiles.filter((f) => f.sectionId === sec.id);
-          const secNotes = subSectionNotes.filter((n) => n.sectionId === sec.id);
+          const secData = sectionDataMap.get(sec.id);
+          const secFiles = secData?.allFiles ?? [];
           const subSectionIds = new Set(sec.customFields.map((cf) => cf.id));
           const generalFiles = secFiles.filter((f) => {
             const subId = getFileSubSectionId(f);
@@ -938,14 +972,8 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
               {(sec.customFields.length > 0 || settings.allowTeacherCustomSections !== false) && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                   {sec.customFields.map((sub) => {
-                    const subFilesList = secFiles.filter(
-                      (f) => getFileSubSectionId(f) === sub.id
-                    );
-                    const subFileCount = subFilesList.length;
-                    const subNoteCount = secNotes.filter(
-                      (n) => n.customFieldValues?._subSectionId === sub.id
-                    ).length;
-                    const subHasDuplicate = subFilesList.some((f) => duplicateFileIds.has(f.id));
+                    const subFileCount = secData?.filesBySub.get(sub.id)?.length ?? 0;
+                    const subNoteCount = secData?.notesBySub.get(sub.id)?.length ?? 0;
                     const totalItems = subFileCount + subNoteCount;
                     const hasContent = totalItems > 0;
                     const cardDropKey = `${sec.id}::${sub.id}`;
@@ -978,7 +1006,7 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                             dispatchDirectSubUpload(sec, sub, valid);
                           }
                         }}
-                        className={`group relative cursor-pointer rounded-xl border p-3.5 flex flex-col items-center justify-center text-center gap-2.5 transition-all hover:shadow-xs ${
+                        className={`group relative cursor-pointer rounded-xl border p-3.5 flex flex-col items-center justify-center text-center gap-2.5 transition-colors hover:shadow-xs ${
                           isDropActive
                             ? 'bg-[#A8B9A5]/25 border-[#556952] ring-2 ring-[#556952]/50'
                             : hasContent
@@ -991,8 +1019,8 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setQuickCardTarget({ section: sec, sub });
-                            window.setTimeout(() => quickCardInputRef.current?.click(), 0);
+                            quickCardTargetRef.current = { section: sec, sub };
+                            quickCardInputRef.current?.click();
                           }}
                           title={`رفع ملفات فوري داخل ${sub.label}`}
                           aria-label={`رفع سريع داخل ${sub.label}`}
@@ -1028,11 +1056,6 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                                 ? `${totalItems} عنصر`
                                 : 'اضغطي أو اسحبي للإرفاق'}
                           </p>
-                          {subHasDuplicate && (
-                            <div className="pt-0.5 flex justify-center">
-                              <DuplicateContentBadge compact />
-                            </div>
-                          )}
                         </div>
                       </div>
                     );
@@ -1289,7 +1312,6 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {groupedModalEntries.map(({ key, primary, fileIds, count }) => {
                       const isSelected = fileIds.some((id) => selectedSubFileIds.has(id));
-                      const hasDuplicateEntry = fileIds.some((id) => duplicateFileIds.has(id));
                       return (
                         <button
                           key={key}
@@ -1335,7 +1357,6 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                           <p className="text-xs sm:text-[13px] font-semibold text-[#454943] line-clamp-2 leading-snug w-full">
                             {primary.title}
                           </p>
-                          {hasDuplicateEntry && <DuplicateContentBadge compact />}
                         </button>
                       );
                     })}
@@ -1430,7 +1451,18 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                     <input
                       type="checkbox"
                       checked={subInstantUpload}
-                      onChange={(e) => setSubInstantUpload(e.target.checked)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSubInstantUpload(checked);
+                        try {
+                          window.localStorage.setItem(
+                            'files_by_lama_instant_upload',
+                            checked ? '1' : '0'
+                          );
+                        } catch {
+                          // ignore storage quota/privacy errors
+                        }
+                      }}
                       className="w-4 h-4 accent-[#556952] rounded cursor-pointer"
                     />
                   </label>
@@ -1532,63 +1564,43 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
                         <span>المحدد حالياً ({subFilesQueue.length} مرفقات وصور)</span>
                         <span className="text-[11px] text-[#666560]">يمكنك إضافة المزيد قبل الحفظ</span>
                       </div>
-                      {subFilesQueue.map((file, idx) => {
-                        const hash = subQueuedHashes[idx];
-                        const existingMatchTitle = hash ? existingContentHashes.get(hash) : undefined;
-                        const duplicateInQueue =
-                          Boolean(hash) &&
-                          subQueuedHashes.some(
-                            (otherHash, otherIdx) => otherIdx !== idx && otherHash === hash
-                          );
-                        const isDup = Boolean(existingMatchTitle || duplicateInQueue);
-
-                        return (
-                          <div
-                            key={`${file.name}-${idx}`}
-                            className="flex items-center justify-between gap-2.5 px-3 py-2"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              {subImagePreviews[idx] ? (
-                                <img
-                                  src={subImagePreviews[idx]!}
-                                  alt={file.name}
-                                  className="w-8 h-8 rounded-lg object-cover border border-[#D9C9B5]/70 shrink-0"
-                                />
-                              ) : file.type.startsWith('image/') ? (
-                                <ImageIcon size={15} className="text-[#556952] shrink-0" />
-                              ) : (
-                                <FileText size={15} className="text-[#556952] shrink-0" />
-                              )}
-                              <span className="text-xs sm:text-sm text-[#454943] truncate">
-                                {file.name}
-                              </span>
-                              {isDup && (
-                                <DuplicateContentBadge
-                                  compact
-                                  title={
-                                    existingMatchTitle
-                                      ? `مطابق في محتواه الداخلي للملف المحفوظ: ${existingMatchTitle}`
-                                      : 'مكرر في محتواه الداخلي ضمن نفس القائمة المختارة'
-                                  }
-                                />
-                              )}
-                              <span className="text-[11px] text-[#666560] font-mono-num shrink-0">
-                                {formatBytesArabic(file.size)}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSubFilesQueue((prev) => prev.filter((_, i) => i !== idx))
-                              }
-                              className="text-[#85847E] hover:text-[#8A5E56] p-1 shrink-0"
-                              aria-label="إزالة الملف"
-                            >
-                              <X size={14} />
-                            </button>
+                      {subFilesQueue.map((file, idx) => (
+                        <div
+                          key={`${file.name}-${idx}`}
+                          className="flex items-center justify-between gap-2.5 px-3 py-2"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {subImagePreviews[idx] ? (
+                              <img
+                                src={subImagePreviews[idx]!}
+                                alt={file.name}
+                                decoding="async"
+                                className="w-8 h-8 rounded-lg object-cover border border-[#D9C9B5]/70 shrink-0"
+                              />
+                            ) : file.type.startsWith('image/') ? (
+                              <ImageIcon size={15} className="text-[#556952] shrink-0" />
+                            ) : (
+                              <FileText size={15} className="text-[#556952] shrink-0" />
+                            )}
+                            <span className="text-xs sm:text-sm text-[#454943] truncate">
+                              {file.name}
+                            </span>
+                            <span className="text-[11px] text-[#666560] font-mono-num shrink-0">
+                              {formatBytesArabic(file.size)}
+                            </span>
                           </div>
-                        );
-                      })}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSubFilesQueue((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="text-[#85847E] hover:text-[#8A5E56] p-1 shrink-0"
+                            aria-label="إزالة الملف"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -1776,16 +1788,20 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
         </form>
       </Modal>
 
-      <UploadFileModal
-        isOpen={uploadOpen}
-        onClose={() => setUploadOpen(false)}
-        defaultSectionId={uploadSectionId}
-        defaultSubSectionId={uploadSubSectionId}
-      />
-      <FilePreviewModal
-        file={visibleFiles.find((f) => f.id === previewFile?.id) ?? null}
-        onClose={() => setPreviewFile(null)}
-      />
+      {uploadOpen && (
+        <UploadFileModal
+          isOpen={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          defaultSectionId={uploadSectionId}
+          defaultSubSectionId={uploadSubSectionId}
+        />
+      )}
+      {previewFile && (
+        <FilePreviewModal
+          file={visibleFiles.find((f) => f.id === previewFile.id) ?? null}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
 
       {/* Standalone Text Note Detail Modal */}
       <Modal
@@ -1909,7 +1925,9 @@ export const TeacherPortfolioView: React.FC<TeacherPortfolioViewProps> = ({ focu
         </form>
       </Modal>
 
-      <VisitCodeModal isOpen={visitModalOpen} onClose={() => setVisitModalOpen(false)} />
+      {visitModalOpen && (
+        <VisitCodeModal isOpen={visitModalOpen} onClose={() => setVisitModalOpen(false)} />
+      )}
     </div>
   );
 };

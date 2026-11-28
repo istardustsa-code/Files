@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   Clock,
   AlertCircle,
-  Copy,
 } from 'lucide-react';
 import type { FileTypeCategory, ReviewStatus } from '../../types/platform';
 import { getFileTypeLabelArabic, getReviewStatusLabelArabic } from '../../utils/formatters';
@@ -89,23 +88,6 @@ export const ReviewStatusInline: React.FC<{ status: ReviewStatus }> = ({ status 
     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#666560]">
       <Clock size={14} className="shrink-0" />
       <span>{getReviewStatusLabelArabic(status)}</span>
-    </span>
-  );
-};
-
-export const DuplicateContentBadge: React.FC<{
-  title?: string;
-  compact?: boolean;
-}> = ({ title = 'محتوى الملف الداخلي مكرر ومطابق لملف آخر', compact = false }) => {
-  return (
-    <span
-      title={title}
-      className={`inline-flex items-center gap-1 font-medium text-[#7B4B43] bg-[#D8BDB7]/35 border border-[#D8BDB7]/80 rounded-md whitespace-nowrap shrink-0 ${
-        compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[11px]'
-      }`}
-    >
-      <Copy size={compact ? 10 : 11} className="shrink-0" />
-      <span>محتوى مكرر</span>
     </span>
   );
 };
